@@ -46,11 +46,12 @@ var DEFAULTS = {
 
   // ---- 批量 / 限流 ----
   // 字幕请求是客户端阻塞等待的：片要少、并发要高、总预算要短，否则客户端先超时 → 「字幕加载失败」
-  cues_per_request: 80,
-  chars_per_request: 4000,
+  cues_per_request: 60,
+  chars_per_request: 3000,
   max_cues: 500,
   timeout_ms: 20000,
-  concurrency: 3,
+  soft_deadline_ms: 9000,
+  concurrency: 4,
 
   // ---- 行为开关 ----
   force_json3: true,
@@ -218,6 +219,7 @@ function resolveConfig() {
   cfg.chars_per_request = toInt(cfg.chars_per_request, 4000, 200, 20000);
   cfg.max_cues = toInt(cfg.max_cues, 500, 1, 5000);
   cfg.timeout_ms = toInt(cfg.timeout_ms, 20000, 2000, 110000);
+  cfg.soft_deadline_ms = toInt(cfg.soft_deadline_ms, 9000, 100, 60000);
   cfg.concurrency = toInt(cfg.concurrency, 3, 1, 6);
 
   cfg.subtitle_mode = String(cfg.subtitle_mode || 'menu').toLowerCase().trim();
@@ -976,12 +978,24 @@ function translateAll(texts, cfg, videoId, finish) {
   var settled = false;
   var conc = Math.max(1, Math.min(6, cfg.concurrency || 1));
 
+  var softTimer = null;
+
   function finishOnce() {
     if (settled) return;
     settled = true;
+    if (softTimer) { clearTimeout(softTimer); softTimer = null; }
     saveCache(ck, cacheMap);
     return finishDebug();
   }
+
+  // 软截止：到点就把「已翻好的 + 原文」交回去。
+  // YouTube 客户端等不住 17 秒（那是它报「字幕加载失败」的真正原因），
+  // 与其让整块字幕被判超时，不如先给一份混着原文的。
+  softTimer = setTimeout(function () {
+    if (settled) return;
+    if (cfg.debug) console.log('[YT字幕] 软截止 ' + cfg.soft_deadline_ms + 'ms 到，先回已翻部分');
+    finishOnce();
+  }, cfg.soft_deadline_ms);
 
   function dispatch(chunk) {
     var input = [];
@@ -1151,18 +1165,96 @@ function buildSystemPrompt(cfg) {
   return parts.join('\n');
 }
 
-function parseJsonArray(text) {
-  var s = String(text || '').trim();
-  s = s.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+/*
+ * 模型经常不老实：外面包 ```json 代码块、前后多说一句「Here are the translations:」、
+ * 用弯引号、最后一个元素多一个逗号、甚至不用数组直接一行一条。
+ * 这里逐级降级，最后一级才放弃——放弃意味着这一片字幕保持原文（用户会觉得「没翻译」）。
+ */
+function stripFences(s) {
+  return String(s || '').replace(/```[a-zA-Z]*\s*/g, '').replace(/```/g, '');
+}
+
+function sliceBalancedArray(s) {
   var start = s.indexOf('[');
-  var end = s.lastIndexOf(']');
-  if (start < 0 || end <= start) return null;
-  try {
-    var arr = JSON.parse(s.slice(start, end + 1));
-    return Array.isArray(arr) ? arr : null;
-  } catch (e) {
-    return null;
+  if (start < 0) return null;
+  var depth = 0, inStr = false, esc = false;
+  for (var i = start; i < s.length; i++) {
+    var c = s.charAt(i);
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '[') depth++;
+    else if (c === ']') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
   }
+  return null;                                  // 括号没闭合（被截断）
+}
+
+function repairJson(s) {
+  return String(s || '')
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/,\s*([\]}])/g, '$1')                          // 尾逗号
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ' ');  // 控制字符
+}
+
+function jsonArrayToStrs(arr) {
+  if (!Array.isArray(arr)) return null;
+  var out = [];
+  for (var i = 0; i < arr.length; i++) {
+    var v = arr[i];
+    if (v === null || v === undefined) out.push('');
+    else if (typeof v === 'string') out.push(v);
+    else if (typeof v === 'number' || typeof v === 'boolean') out.push(String(v));
+    else if (v && typeof v === 'object') {                 // [{"text":"..."}]
+      var t = v.text || v.translation || v.utf8 || v.content || v.translated_text;
+      out.push(t === undefined || t === null ? '' : String(t));
+    } else out.push('');
+  }
+  return out;
+}
+
+function parseJsonArrayLines(s) {
+  // 最后一级：模型直接一行一条（可能带 "-" "1." 或引号）
+  var lines = String(s || '').split(/\r?\n/).map(function (l) {
+    return l.replace(/^\s*(?:[-*\u2022]|\d+[.)])\s*/, '')
+            .replace(/^["'\u201c]/, '').replace(/["',\u201d]\s*$/, '')
+            .replace(/\\n/g, ' ').trim();
+  }).filter(function (l) { return l.length > 0; });
+  return lines.length ? lines : null;
+}
+
+function parseJsonArray(text) {
+  var raw = String(text == null ? '' : text).trim();
+  if (!raw) return null;
+  var s = stripFences(raw).trim();
+
+  // 1) 直接 parse（含前后多余文字时先切出平衡的数组片段）
+  var candidates = [s];
+  var bal = sliceBalancedArray(s);
+  if (bal && bal !== s) candidates.push(bal);
+
+  for (var i = 0; i < candidates.length; i++) {
+    try {
+      var arr = jsonArrayToStrs(JSON.parse(candidates[i]));
+      if (arr) return arr;
+    } catch (e) { /* 继续降级 */ }
+    try {
+      var arr2 = jsonArrayToStrs(JSON.parse(repairJson(candidates[i])));
+      if (arr2) return arr2;
+    } catch (e2) { /* 继续降级 */ }
+  }
+
+  // 2) 一行一条
+  var lines = parseJsonArrayLines(s);
+  if (lines && lines.length) return lines;
+  return null;
 }
 
 function callOpenAI(texts, cfg, cb) {

@@ -25,7 +25,7 @@ function run(opts) {
   const notes = [];
   const calls = [];
   const done = [];
-  const arg = Object.assign({ provider: 'openai', api_key: 'sk-test', cache: 'true' }, opts.argument || {});
+  const arg = Object.assign({ provider: 'openai', api_key: 'sk-test', cache: 'true', soft_deadline_ms: 60000 }, opts.argument || {});
 
   const translator = opts.translate || function (o, cb) {
     const texts = extractUserTexts(o.body);
@@ -35,7 +35,9 @@ function run(opts) {
 
   const sandbox = {
     console: { log: function () {} },
-    setTimeout: function (fn) { return setTimeout(fn, 1); },
+    // 沙箱里把延时按 1/100 压缩，但保留相对顺序（重试 500ms→5ms，软截止 9000ms→90ms），
+    // 否则所有定时器都挤成 1ms，软截止会抢在重试前面触发。
+    setTimeout: function (fn, d) { return setTimeout(fn, Math.max(1, Math.round((d || 0) / 100))); },
     clearTimeout: clearTimeout,
     JSON, Date, Math, Object, Array, String, Number, RegExp, Boolean, Error,
     parseInt, parseFloat, isNaN, encodeURIComponent, decodeURIComponent,
@@ -675,6 +677,43 @@ test('gemini 404 模型下线：继续沿模型链换到可用模型', function 
     assert.deepStrictEqual(seen, ['gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'],
       '应依次换模型，实际 ' + JSON.stringify(seen));
     assert.ok(r.done[0].body.indexOf('译:Hi') >= 0, '最终应拿到译文');
+  });
+});
+
+test('模型把 JSON 包在 ```json 代码块里也能解析', function () {
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: { subtitle_mode: 'llm', cache: false },
+    translate: function (o, cb) {
+      cb(null, { status: 200 }, JSON.stringify({
+        choices: [{ message: { content: 'Here you go:\n```json\n["译:Hi",]\n```\nHope it helps.' } }]
+      }));
+    }
+  });
+  return sleep(60).then(function () {
+    assert.ok(r.done[0].body.indexOf('译:Hi') >= 0, '应解析出译文，实际 ' + r.done[0].body);
+  });
+});
+
+test('软截止到点：先回已翻部分，不让客户端等超时', function () {
+  const body = JSON.stringify({ events: [
+    { tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'A' }] },
+    { tStartMs: 1000, dDurationMs: 1000, segs: [{ utf8: 'B' }] }
+  ] });
+  const r = run({
+    url: TIMEDTEXT, body: body,
+    argument: { subtitle_mode: 'llm', cache: false, cues_per_request: 1, soft_deadline_ms: 100 },
+    translate: function (o, cb) {
+      const t = extractUserTexts(o.body)[0];
+      if (t === 'A') return cb(null, { status: 200 }, JSON.stringify({ choices: [{ message: { content: '["译:A"]' } }] }));
+      // B 永不返回，模拟上游卡住
+    }
+  });
+  return sleep(400).then(function () {
+    assert.strictEqual(r.done.length, 1, '必须在软截止时交回结果');
+    assert.ok(r.done[0].body.indexOf('译:A') >= 0, '第一片应是译文');
+    assert.ok(r.done[0].body.indexOf('"B"') >= 0, '未翻的应保留原文');
   });
 });
 

@@ -145,11 +145,12 @@ Loon →「插件」→「YouTube 字幕翻译」→ 点进详情页，**参数�
 | `subtitle_mode` | `menu` | `menu` = 解锁播放器「自动翻译」全语言，挑一次就记住（**推荐、最稳**）；`google` = 自动给字幕地址加 `tlang`，秒出但部分视频会被 YouTube 拒；`llm` = 用你自己配的模型逐条翻（质量最好，但有往返延迟） |
 | `bilingual` | `false` | 双语字幕：每条显示两行，上一行原文、下一行译文 |
 | `source_lang` | `auto` | 源语言；`auto` 交给模型判断 |
-| `cues_per_request` | `80` | 一次请求最多翻多少条字幕。别调太小：字幕请求是**客户端阻塞等待**的，片多就慢 |
-| `chars_per_request` | `4000` | 一次请求的字符预算上限（到量就切下一片） |
+| `cues_per_request` | `60` | 一次请求最多翻多少条字幕。别调太小：字幕请求是**客户端阻塞等待**的，片多就慢 |
+| `chars_per_request` | `3000` | 一次请求的字符预算上限（到量就切下一片） |
 | `max_cues` | `500` | 单次字幕最多翻多少条，超出部分保留原文（防长视频烧钱） |
 | `timeout_ms` | `20000` | 脚本内部总预算，超时就把已翻好的先返回、其余保留原文。**别调很大**，见「为什么不是流式」 |
-| `concurrency` | `3` | 同时发几个翻译请求（1~6）。越高首屏越快，也越容易撞上游 RPM |
+| `soft_deadline_ms` | `9000` | **软截止**：到点立刻把「已翻好的译文 + 没翻完的原文」交回去。YouTube 客户端等不住十几秒，这才是「字幕加载失败」的真凶；调小更稳（6000~8000），调大译文更全但更容易被判超时 |
+| `concurrency` | `4` | 同时发几个翻译请求（1~6）。越高首屏越快，也越容易撞上游 RPM |
 | `retry_times` | `2` | 遇到 `429` / `503` / `high demand` / 超时这类临时错误时的重试次数。`gemini` 后端重试时会**沿模型链往下换**（`gemini-flash-lite-latest` → `gemini-3.5-flash-lite` → `gemini-3-flash`，改 `fallback_model` 可自定义逗号列表），`404 模型下线` 也走这条链；换完仍失败才真正报错 |
 | `fallback_model` | `gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash` | 备用模型链（逗号分隔，按顺序换）。模型报 `404 已下线` 或过载时会依次尝试；只有 `gemini` 后端会换模型，其它后端只做原样重试 |
 | `force_json3` | `true` | 改写 player 里的 `baseUrl` 为 `json3`，**绝大多数情况必须开** |
@@ -388,6 +389,8 @@ provider = google
 
 ## 七、为什么不是流式翻译（延迟是硬约束）
 
+> 补充（v2026.11.22.9）：除了总预算 `timeout_ms`，还有一个更早的**软截止** `soft_deadline_ms`（默认 9000ms）。到点不等上游，直接把「已翻好的 + 原文」交回去——同一部片子第二次打开会命中缓存补全译文。宁可先给半份中文，也别让客户端报「字幕加载失败」。
+
 Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整的 `timedtext` 响应 → 翻译 → `$done({body})`。
 它没有 SSE/流式回传的接口，所以「先出一句、再出一句」做不到——客户端等你这一条响应，等太久就自己放弃，
 表现就是**Loon 弹了「已翻译」，YouTube 却报「字幕加载失败」**（YouTube 侧对字幕请求有超时）。
@@ -415,6 +418,16 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 1. 什么都不做——插件默认 `retry_times=2`，会自动重试；`gemini` 后端还会沿模型链换（`gemini-flash-lite-latest` → `gemini-3.5-flash-lite` → `gemini-3-flash`）兜底；
 2. 把 `模型名` 换成不会下线的档：`gemini-flash-lite-latest`（别名）或 `gemini-3.8-flash`，或干脆换 `deepseek-flash`（最省心，不受 Google 下线节奏影响）；
 3. 干脆把 `字幕方式` 改成 `google` 或 `menu`——这条路完全不经过模型，不可能 503。
+
+### 通知「字幕翻译失败 · 模型未返回 JSON 数组」
+
+模型回了东西，但不是一个干净的 JSON 字符串数组。常见三种原因，脚本现在都能救回来（剥 ```json 代码块、去掉前后寒暄、尾逗号修复、一行一条）：
+
+1. **模型档位不对**：`gemini-4-hydrogen`、`gemini-3.7-flash`、`deepseek-v4-pro` 这类默认带思考/会啰嗦的档，容易在数组外多说一句。字幕场景请用 Flash·Lite 档：`gemini-flash-lite-latest`、`gemini-3.8-flash`、`deepseek-flash`。
+2. **`temperature` 太高**：用 `custom` 后端时自己传 `temperature: 0`。
+3. **单次条数太多**：一片 100+ 条时模型容易越界或漏条。把 `每条字幕` 降到 40~60。
+
+顺带看一眼**耗时**：通知里 `gemini · 17744ms` 这种，说明就算翻译成功，客户端也早就放弃了——把 `model` 换 Lite 档、`concurrency` 提到 4、`soft_deadline_ms` 降到 8000。
 
 ### 弹「404 / model is no longer available」
 
