@@ -183,29 +183,44 @@ V4-Pro 质量更高但更贵也更慢，字幕用 Flash 就够。
 
 ### Google Gemini
 
-Gemini 走官方的 **OpenAI 兼容层**，所以 `provider` 保持 `openai`，只换地址和模型名：
+Gemini 有两种接法，**先看你手上的 key 是什么样**：
+
+| key 形态 | 该选哪个 `provider` | 说明 |
+| --- | --- | --- |
+| `AQ.` 开头（2026 年起新建的 key 基本都是） | `gemini` | 走 Google 原生 Interactions API，脚本已内置 |
+| `AIza` 开头（老 key） | `gemini` 或 `openai` | 两种都行，`gemini` 更稳 |
+
+**接法一：原生 Interactions API（推荐）**
+
+```
+provider     = gemini
+api_base_url = （留空即可，自动用 https://generativelanguage.googleapis.com/v1beta/interactions）
+api_model    = gemini-3.7-flash
+api_key      = AQ....
+```
+
+脚本用 `x-goog-api-key` 头传 key（新版 `AQ.` key 只能用这种方式，走 `Authorization: Bearer` 会认证失败），
+请求体只发 `{ model, input }`，把提示词和待翻译数组一起放进 `input`，不依赖会变的字段名。
+返回值依次从 `output_text` → `outputs[].content[].text` → `steps[]` 里取，形状变了也能解析。
+
+**接法二：OpenAI 兼容层**
 
 ```
 provider     = openai
 api_base_url = https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
-api_model    = gemini-2.5-flash
-api_key      = AIza...
+api_model    = gemini-3.7-flash
+api_key      = AQ... 或 AIza...
 ```
 
-key 在 **Google AI Studio** 拿，不需要信用卡：
+注意别把 `https://generativelanguage.googleapis.com/v1beta/interactions` 填给 `openai` 后端：那是格式完全不同的原生接口，
+返回里没有 `choices[0].message.content`，填错会一直拿不到译文。
 
-1. 打开 https://aistudio.google.com/app/apikey （整个 AI Studio 都在 Google 墙内，国内需挂代理）；
-2. 用 Google 账号登录，同意 Gemini API 条款；
-3. 点 **Create API key** → 选 **Create API key in new Google Cloud project**（新项目最省事）；
-4. 复制 `AIza` 开头的字符串填进 `api_key`。
+**模型怎么选**：`gemini-3.7-flash`（$0.75/$3.75）质量与成本平衡最好；`gemini-2.5-flash`（$0.15/$0.60）最便宜；
+`gemini-4-hydrogen` 是给编码/Agent 场景的旗舰，默认思考等级 high，翻字幕**又慢又贵**，不建议。
 
-注意三点：
-
-- **额度按项目算，不按 key 算**；同一个项目建 5 把钥匙，额度还是那一份。
-- 免费层只能用 Flash 档模型（`gemini-2.5-flash`、`gemini-2.5-flash-lite`），RPM 大约 10~15、还有每日上限；
-  给项目**绑定结算账号就自动进付费层**，免费额度随之消失。想一直白嫖就别绑卡。
-- 插件本体跑在 Loon 里，所以 Loon 的分流规则里 `generativelanguage.googleapis.com` 和 `aistudio.google.com`
-  必须走代理节点，否则请求直接超时。长视频会切 5~10 次请求，免费档贴着 RPM 上限时把 `cues_per_request` 调小更稳。
+**key 从哪来**：<https://aistudio.google.com/app/apikey>，无需信用卡，免费层只有 Flash 档模型（RPM 约 10~15）。
+注意 **额度按项目算，不按 key 算**；给项目绑定结算账号就自动转付费层，免费额度随之消失。
+另外插件跑在 Loon 里，`generativelanguage.googleapis.com` 与 `aistudio.google.com` 必须走代理。
 
 ### Moonshot / Kimi
 
@@ -347,6 +362,11 @@ provider = google
 - YouTube 自己没开字幕（CC）：插件只在客户端**请求字幕时**才生效；
 - 命中不到接口：在 Loon 日志里搜 `timedtext`，没有就是规则/MITM 问题；
 - 走了 QUIC：加一条 `AND,((PROTOCOL,UDP),(DEST-PORT,443)),REJECT` 逼它回落 TCP（会略微影响别的 UDP 443 应用，按需开）。
+
+**填了 key 和模型但好像完全没用上**
+
+多半是 `翻译后端` 选成了 `google`。那是**免 key 的免费接口**（`translate.googleapis.com`），脚本走它时不读
+`接口地址` / `API Key` / `模型名` 这三项——填了也白填。要用自己的 key，后端必须是 `openai` 或 `gemini`。
 
 **弹了「字幕格式无法翻译」**
 

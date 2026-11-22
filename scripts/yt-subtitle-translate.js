@@ -185,6 +185,12 @@ function resolveConfig() {
   }
 
   cfg.provider = String(cfg.provider || 'openai').toLowerCase().trim();
+  if (/^(gemini|googleai|interactions)$/.test(cfg.provider)) {
+    // gemini 原生后端：用户没改地址（还留着默认的 non-google 地址）时自动指向 Interactions API
+    if (!cfg.api_base_url || !/googleapis\.com/.test(String(cfg.api_base_url))) {
+      cfg.api_base_url = GEMINI_DEFAULT_URL;
+    }
+  }
   cfg.api_base_url = String(cfg.api_base_url || DEFAULTS.api_base_url).trim();
   cfg.api_key = String(cfg.api_key || '').trim();
   cfg.api_model = String(cfg.api_model || DEFAULTS.api_model).trim();
@@ -676,6 +682,7 @@ function translateAll(texts, cfg, videoId, finish) {
 
 function callProvider(texts, cfg, cb) {
   var p = cfg.provider;
+  if (p === 'gemini' || p === 'googleai' || p === 'interactions') return callGeminiNative(texts, cfg, cb);
   if (p === 'deepl') return callDeepL(texts, cfg, cb);
   if (p === 'google' || p === 'googlefree' || p === 'gtx') return callGoogle(texts, cfg, cb);
   if (p === 'custom') return callCustom(texts, cfg, cb);
@@ -759,6 +766,100 @@ function callOpenAI(texts, cfg, cb) {
     }
     if (cfg.debug) console.log('[YT字幕] 条数不一致 ' + arr.length + '/' + texts.length + '，已按序对齐');
     return cb(null, loose);
+  });
+}
+
+/* ================================ 后端：Gemini 原生（Interactions API） ================================ */
+
+var GEMINI_DEFAULT_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+
+// Interactions API 的返回形状会随版本变化，这里按优先级把可读文本捞出来
+function deepText(node) {
+  if (!node) return '';
+  if (typeof node === 'string') return node;
+  if (Object.prototype.toString.call(node) === '[object Array]') {
+    var out = [];
+    for (var i = 0; i < node.length; i++) {
+      var s = deepText(node[i]);
+      if (s) out.push(s);
+    }
+    return out.join('');
+  }
+  if (typeof node === 'object') {
+    if (typeof node.text === 'string' && node.text) return node.text;
+    var keys = ['content', 'parts', 'output', 'outputs', 'output_text', 'message', 'steps'];
+    for (var k = 0; k < keys.length; k++) {
+      if (node[keys[k]] !== undefined) {
+        var t = deepText(node[keys[k]]);
+        if (t) return t;
+      }
+    }
+  }
+  return '';
+}
+
+function pickGeminiText(j) {
+  if (!j) return '';
+  if (typeof j === 'string') return j;
+  if (typeof j.output_text === 'string' && j.output_text) return j.output_text;
+  var cands = [j.output, j.outputs, j.steps, j.candidates, j.contents, j.response];
+  for (var i = 0; i < cands.length; i++) {
+    var t = deepText(cands[i]);
+    if (t) return t;
+  }
+  return deepText(j);
+}
+
+// 条数与输入不一致时按序对齐，缺的位置留空（调用方回退原文）
+function alignToInput(arr, texts, cfg) {
+  if (arr.length === texts.length) {
+    var exact = [];
+    for (var i = 0; i < arr.length; i++) exact.push(arr[i] === null || arr[i] === undefined ? '' : String(arr[i]));
+    return exact;
+  }
+  var loose = [];
+  for (var k = 0; k < texts.length; k++) {
+    loose.push(k < arr.length && arr[k] !== null && arr[k] !== undefined ? String(arr[k]) : '');
+  }
+  if (cfg.debug) console.log('[YT字幕] 条数不一致 ' + arr.length + '/' + texts.length + '，已按序对齐');
+  return loose;
+}
+
+/*
+ * Gemini 原生后端：POST /v1beta/interactions
+ * 请求头用 x-goog-api-key（新版 AQ. 开头的 key 也只能这样传），body 只有 { model, input }，
+ * 把系统提示词和待翻译数组一起塞进 input，避免依赖不确定的字段名。
+ */
+function callGeminiNative(texts, cfg, cb) {
+  var url = cfg.api_base_url && /googleapis\.com/.test(cfg.api_base_url) ? cfg.api_base_url : GEMINI_DEFAULT_URL;
+  var input = buildSystemPrompt(cfg) + '\n\n共 ' + texts.length + ' 条：\n' + JSON.stringify(texts);
+  var payload = { model: cfg.api_model || 'gemini-2.5-flash', input: input };
+  var headers = { 'Content-Type': 'application/json' };
+  if (cfg.api_key) headers['x-goog-api-key'] = cfg.api_key;
+
+  $httpClient.post({
+    url: url,
+    headers: headers,
+    body: JSON.stringify(payload)
+  }, function (err, resp, data) {
+    if (err) return cb(String(err));
+    var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
+    if (status && (status < 200 || status >= 300)) {
+      return cb('HTTP ' + status + ' ' + String(data || '').slice(0, 160));
+    }
+    var j;
+    try { j = JSON.parse(data); } catch (e) { return cb('响应非 JSON：' + String(data || '').slice(0, 120)); }
+    if (j && j.error) {
+      return cb('Gemini 报错：' + String(j.error.message || j.error.status || '').slice(0, 140));
+    }
+    if (j && j.status && /fail|error|cancel|requires_action/i.test(String(j.status))) {
+      return cb('请求未完成 status=' + j.status + '（可用 gemini-3.7-flash 等非长任务模型）');
+    }
+    var content = pickGeminiText(j);
+    if (!content) return cb('响应里没有可读文本，检查模型名是否支持 Interactions API');
+    var arr = parseJsonArray(content);
+    if (!arr) return cb('模型未返回 JSON 数组');
+    return cb(null, alignToInput(arr, texts, cfg));
   });
 }
 

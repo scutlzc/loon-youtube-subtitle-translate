@@ -275,6 +275,63 @@ test('模型返回条数不足：缺的位置保留原文', function () {
   assert.strictEqual(out.events[1].segs[0].utf8, 'B', '缺译位置应保留原文');
 });
 
+/* ------------------------------------------------- Gemini 原生后端（Interactions API） */
+test('gemini 原生：x-goog-api-key + output_text 形状', function () {
+  const body = JSON.stringify({ events: [
+    { tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'A' }] },
+    { tStartMs: 1000, dDurationMs: 1000, segs: [{ utf8: 'B' }] }
+  ] });
+  let seen = null;
+  const r = run({
+    url: TIMEDTEXT,
+    body: body,
+    argument: { provider: 'gemini', api_key: 'AQ.test', api_model: 'gemini-3.7-flash', cache: false },
+    translate: function (o, cb) {
+      seen = o;
+      cb(null, { status: 200 }, JSON.stringify({ id: 'int_1', status: 'completed', output_text: '["译:A","译:B"]' }));
+    }
+  });
+  assert.ok(/generativelanguage\.googleapis\.com\/v1beta\/interactions/.test(seen.url), '接口地址应自动指向 Interactions API');
+  assert.strictEqual(seen.headers['x-goog-api-key'], 'AQ.test', '新版 key 必须走 x-goog-api-key');
+  assert.strictEqual(seen.headers['Authorization'], undefined);
+  const payload = JSON.parse(seen.body);
+  assert.strictEqual(payload.model, 'gemini-3.7-flash');
+  assert.ok(payload.input.indexOf('["A","B"]') >= 0, '待翻译数组应塞进 input');
+  const out = JSON.parse(r.done[0].body);
+  assert.strictEqual(out.events[0].segs[0].utf8, '译:A');
+  assert.strictEqual(out.events[1].segs[0].utf8, '译:B');
+});
+
+test('gemini 原生：嵌套 outputs[].content[].text 形状也能解析', function () {
+  const body = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] });
+  const r = run({
+    url: TIMEDTEXT,
+    body: body,
+    argument: { provider: 'gemini', api_key: 'AQ.test', cache: false },
+    translate: function (o, cb) {
+      cb(null, { status: 200 }, JSON.stringify({
+        status: 'completed',
+        outputs: [{ type: 'text', content: [{ type: 'text', text: '["译:Hi"]' }] }]
+      }));
+    }
+  });
+  const out = JSON.parse(r.done[0].body);
+  assert.strictEqual(out.events[0].segs[0].utf8, '译:Hi');
+});
+
+test('gemini 原生：HTTP 401 通知里带状态码', function () {
+  const body = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] });
+  const r = run({
+    url: TIMEDTEXT,
+    body: body,
+    argument: { provider: 'gemini', api_key: 'bad', cache: false },
+    translate: function (o, cb) { cb(null, { status: 401 }, '{"error":{"message":"API key not valid"}}'); }
+  });
+  assert.strictEqual(JSON.stringify(r.done), "[{}]", '失败时原样放行');
+  const joined = JSON.stringify(r.notes);
+  assert.ok(/HTTP 401/.test(joined), '应弹出带状态码的失败通知');
+});
+
 /* ------------------------------------------------- 插件参数类型（新语法） */
 test('插件参数对象：Number / Boolean 类型直接生效', function () {
   const body = JSON.stringify({ events: [
