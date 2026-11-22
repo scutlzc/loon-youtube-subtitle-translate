@@ -32,17 +32,17 @@ test/run.js                            # 本地自测（Node，模拟 Loon 运�
 Loon →「插件」→ 右上角 `+` →「从 URL 安装」：
 
 ```
-https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.11/YouTube-Subtitle-Translate.plugin
+https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.12/YouTube-Subtitle-Translate.plugin
 ```
 
 或者直接在 Safari 打开：
 
 ```
-loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.11/YouTube-Subtitle-Translate.plugin
+loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.12/YouTube-Subtitle-Translate.plugin
 ```
 
-> 上面是**固定版本**链接（`v2026.11.22.11`），装到的就是这个版本，raw 立刻生效。
-> 想自动跟随最新提交，把路径里的 `v2026.11.22.11` 换成 `main`；但 GitHub raw 有约 5 分钟 CDN 缓存，
+> 上面是**固定版本**链接（`v2026.11.22.12`），装到的就是这个版本，raw 立刻生效。
+> 想自动跟随最新提交，把路径里的 `v2026.11.22.12` 换成 `main`；但 GitHub raw 有约 5 分钟 CDN 缓存，
 > 而且**移动同名 tag 后旧缓存还在**（同一个 tag 名会继续返回旧内容），所以每次发版都换一个新 tag。
 > 刚推上去的一两分钟内可能会拿到旧文件，遇到「更新完还是老样子」等几分钟再更新一次即可。
 
@@ -50,7 +50,7 @@ loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subt
 
 > **国内网络提示**：插件里的脚本地址是 GitHub raw，连不上 raw 的环境（脚本拉不下来＝完全没反应）请改装
 > `YouTube-Subtitle-Translate.cdn.plugin`，它只有脚本地址不同，走 jsDelivr CDN：
-> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.11/YouTube-Subtitle-Translate.cdn.plugin`
+> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.12/YouTube-Subtitle-Translate.cdn.plugin`
 
 > **版本要求**：主插件用 Loon 3.5.1 (983) 起的新版 Script 语法（`script("...", {${参数}})`），
 > 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
@@ -389,7 +389,7 @@ provider = google
 
 ## 七、为什么不是流式翻译（延迟是硬约束）
 
-> 补充（v2026.11.22.11）：除了总预算 `timeout_ms`，还有一个更早的**软截止** `soft_deadline_ms`（默认 9000ms）。到点不等上游，直接把「已翻好的 + 原文」交回去——同一部片子第二次打开会命中缓存补全译文。宁可先给半份中文，也别让客户端报「字幕加载失败」。
+> 补充（v2026.11.22.12）：除了总预算 `timeout_ms`，还有一个更早的**软截止** `soft_deadline_ms`（默认 9000ms）。到点不等上游，直接把「已翻好的 + 原文」交回去——同一部片子第二次打开会命中缓存补全译文。宁可先给半份中文，也别让客户端报「字幕加载失败」。
 
 Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整的 `timedtext` 响应 → 翻译 → `$done({body})`。
 它没有 SSE/流式回传的接口，所以「先出一句、再出一句」做不到——客户端等你这一条响应，等太久就自己放弃，
@@ -411,7 +411,7 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 
 ## 八、排错
 
-> 从 v2026.11.22.11 起，每条通知都带版本号（`v2026.11.22.11 · openai · 8001ms`）。
+> 从 v2026.11.22.12 起，每条通知都带版本号（`v2026.11.22.12 · openai · 8001ms`）。
 > **先看这个版本号**：如果显示的不是最新版，说明插件没更新到（Loon 会缓存插件文件），
 > 那后面所有参数调整都不会生效——这是「怎么改都还是超时」最常见的原因。清单
 
@@ -425,7 +425,7 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 
 ### 通知「接口 3 秒无响应」/「GET 能通、POST 挂住」/「整条链路不通」
 
-这三条是 v2026.11.22.11 起的新探针，专门区分**请求根本没回来**和**模型慢**：
+这三条是 v2026.11.22.12 起的新探针，专门区分**请求根本没回来**和**模型慢**：
 
 | 通知 | 含义 | 处理 |
 |---|---|---|
