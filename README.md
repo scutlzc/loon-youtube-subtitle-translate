@@ -149,6 +149,32 @@ api_model    = deepseek-flash
 旧名 `deepseek-v4-flash` 仍可调用（按 Flash 计费）；`deepseek-chat` / `deepseek-reasoner` 官方已宣布逐步弃用。
 V4-Pro 质量更高但更贵也更慢，字幕用 Flash 就够。
 
+### Google Gemini
+
+Gemini 走官方的 **OpenAI 兼容层**，所以 `provider` 保持 `openai`，只换地址和模型名：
+
+```
+provider     = openai
+api_base_url = https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+api_model    = gemini-2.5-flash
+api_key      = AIza...
+```
+
+key 在 **Google AI Studio** 拿，不需要信用卡：
+
+1. 打开 https://aistudio.google.com/app/apikey （整个 AI Studio 都在 Google 墙内，国内需挂代理）；
+2. 用 Google 账号登录，同意 Gemini API 条款；
+3. 点 **Create API key** → 选 **Create API key in new Google Cloud project**（新项目最省事）；
+4. 复制 `AIza` 开头的字符串填进 `api_key`。
+
+注意三点：
+
+- **额度按项目算，不按 key 算**；同一个项目建 5 把钥匙，额度还是那一份。
+- 免费层只能用 Flash 档模型（`gemini-2.5-flash`、`gemini-2.5-flash-lite`），RPM 大约 10~15、还有每日上限；
+  给项目**绑定结算账号就自动进付费层**，免费额度随之消失。想一直白嫖就别绑卡。
+- 插件本体跑在 Loon 里，所以 Loon 的分流规则里 `generativelanguage.googleapis.com` 和 `aistudio.google.com`
+  必须走代理节点，否则请求直接超时。长视频会切 5~10 次请求，免费档贴着 RPM 上限时把 `cues_per_request` 调小更稳。
+
 ### Moonshot / Kimi
 
 ```
