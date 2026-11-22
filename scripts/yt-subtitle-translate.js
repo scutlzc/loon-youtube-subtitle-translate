@@ -46,8 +46,8 @@ var DEFAULTS = {
 
   // ---- 批量 / 限流 ----
   // 字幕请求是客户端阻塞等待的：片要少、并发要高、总预算要短，否则客户端先超时 → 「字幕加载失败」
-  cues_per_request: 60,
-  chars_per_request: 3000,
+  cues_per_request: 50,
+  chars_per_request: 2500,
   max_cues: 500,
   timeout_ms: 20000,
   soft_deadline_ms: 9000,
@@ -168,6 +168,32 @@ function stripTags(s) {
 
 /* ================================ 配置解析 ================================ */
 
+/*
+ * 接口地址最容易填错的三处：只写到域名、写成 /v1、或者干脆忘了 /chat/completions。
+ * 这里补全，省掉「填错就静默超时」的坑。
+ */
+function normalizeBaseUrl(url, provider) {
+  var u = String(url || '').trim();
+  if (!u) return u;
+  var p = String(provider || '').toLowerCase();
+  if (p === 'google' || p === 'deepl' || p === 'gemini' || p === 'googleai' || p === 'interactions') return u;
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  var m = u.match(/^(https?:\/\/[^\/]+)(\/.*)?$/i);
+  if (!m) return u;
+  var origin = m[1];
+  var path = m[2] || '/';
+  if (/custom/i.test(p)) return u;                       // 自定义模板的地址原样不动
+  if (/\/chat\/completions/i.test(path)) return origin + path;
+  if (/^\/v\d+\/?$/i.test(path)) return origin + path.replace(/\/$/, '') + '/chat/completions';
+  if (path === '/' || path === '') {
+    if (/deepseek|moonshot|siliconflow|openrouter|one-api|oneapi|ohmygpt|volces|dashscope|bigmodel/i.test(origin)) {
+      return origin + '/chat/completions';
+    }
+    return origin + '/v1/chat/completions';
+  }
+  return u;
+}
+
 function resolveConfig() {
   var cfg = {};
   var k;
@@ -218,6 +244,7 @@ function resolveConfig() {
   cfg.cues_per_request = toInt(cfg.cues_per_request, 80, 1, 200);
   cfg.chars_per_request = toInt(cfg.chars_per_request, 4000, 200, 20000);
   cfg.max_cues = toInt(cfg.max_cues, 500, 1, 5000);
+  cfg.api_base_url = normalizeBaseUrl(String(cfg.api_base_url || '').trim(), cfg.provider);
   cfg.timeout_ms = toInt(cfg.timeout_ms, 20000, 2000, 110000);
   cfg.soft_deadline_ms = toInt(cfg.soft_deadline_ms, 9000, 100, 60000);
   cfg.concurrency = toInt(cfg.concurrency, 3, 1, 6);
@@ -445,7 +472,12 @@ function prefetchOne(cfg, url) {
       var parsed = collectJson3(root);
       if (!parsed.texts.length) return;
       if (cfg.debug) console.log('[YT字幕] 预热 ' + parsed.texts.length + ' 条');
-      translateAll(parsed.texts, cfg, videoIdFromUrl(url), function () { /* 只写缓存 */ });
+      // 预热没有客户端在等，给它一份「后台预算」：软截止推到硬上限，别用 9 秒把人截断
+      var bg = JSON.parse(JSON.stringify(cfg));
+      bg.cache = true;
+      bg.debug = false;
+      bg.soft_deadline_ms = bg.timeout_ms;
+      translateAll(parsed.texts, bg, videoIdFromUrl(url), function () { /* 只写缓存 */ });
     });
   } catch (e) { /* 预热失败不影响播放 */ }
 }

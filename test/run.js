@@ -717,6 +717,66 @@ test('软截止到点：先回已翻部分，不让客户端等超时', function
   });
 });
 
+test('接口地址只写到域名：自动补 /chat/completions', function () {
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: {
+      provider: 'openai', api_base_url: 'https://api.deepseek.com', api_model: 'deepseek-flash',
+      subtitle_mode: 'llm', cache: false
+    }
+  });
+  return sleep(60).then(function () {
+    assert.strictEqual(r.calls[0].url, 'https://api.deepseek.com/chat/completions', '应补全路径，实际 ' + r.calls[0].url);
+  });
+});
+
+test('接口地址写成 /v1：自动补成 /v1/chat/completions', function () {
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: {
+      provider: 'openai', api_base_url: 'https://api.moonshot.cn/v1', api_model: 'moonshot-v1-8k',
+      subtitle_mode: 'llm', cache: false
+    }
+  });
+  return sleep(60).then(function () {
+    assert.strictEqual(r.calls[0].url, 'https://api.moonshot.cn/v1/chat/completions', '实际 ' + r.calls[0].url);
+  });
+});
+
+test('预热用后台长预算：慢接口也能写进缓存（不被 9 秒软截止截断）', function () {
+  const store = {};
+  const body = JSON.stringify({
+    captions: { playerCaptionsTracklistRenderer: { captionTracks: [
+      { baseUrl: 'https://www.youtube.com/api/timedtext?v=pf1&lang=en&fmt=pb', languageCode: 'en', kind: '', isTranslatable: true }
+    ] } }
+  });
+  run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: body,
+    store: store,
+    argument: { subtitle_mode: 'llm', prefetch: true, cache: true, soft_deadline_ms: 10 },
+    translate: function (o, cb) {
+      // GET 是预热时回拉原始字幕（json3），POST 才是翻译
+      if (!o.body) {
+        return cb(null, { status: 200 }, JSON.stringify({ events: [
+          { tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Warm' }] }
+        ] }));
+      }
+      // 150ms 才回答：比软截止(10ms)慢得多，但比后台预算(硬上限)快
+      setTimeout(function () {
+        const texts = extractUserTexts(o.body);
+        cb(null, { status: 200 }, JSON.stringify({ choices: [{ message: { content: JSON.stringify(texts.map(function (t) { return '译:' + t; })) } }] }));
+      }, 150);
+    }
+  });
+  return sleep(700).then(function () {
+    const keys = Object.keys(store).filter(function (k) { return k.indexOf('ytst.') === 0 && k.indexOf('ytst.notice') < 0 && k.indexOf('ytst.probe') < 0; });
+    assert.ok(keys.length > 0, '预热应写入缓存，store 只有 ' + Object.keys(store).join(','));
+  });
+});
+
 /* --------------------------------------------------------------- 输出 */
 Promise.all(pending).then(function () {
 let failed = 0;
