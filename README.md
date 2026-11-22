@@ -151,7 +151,7 @@ Loon →「插件」→「YouTube 字幕翻译」→ 点进详情页，**参数�
 | `timeout_ms` | `20000` | 脚本内部总预算，超时就把已翻好的先返回、其余保留原文。**别调很大**，见「为什么不是流式」 |
 | `concurrency` | `3` | 同时发几个翻译请求（1~6）。越高首屏越快，也越容易撞上游 RPM |
 | `retry_times` | `2` | 遇到 `429` / `503` / `high demand` / 超时这类临时错误时的重试次数。`gemini` 后端重试时会**沿模型链往下换**（`gemini-flash-lite-latest` → `gemini-3.5-flash-lite` → `gemini-3-flash`，改 `fallback_model` 可自定义逗号列表），`404 模型下线` 也走这条链；换完仍失败才真正报错 |
-| `fallback_model` | `gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3-flash` | 备用模型链（逗号分隔，按顺序换）。模型报 `404 已下线` 或过载时会依次尝试；只有 `gemini` 后端会换模型，其它后端只做原样重试 |
+| `fallback_model` | `gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash` | 备用模型链（逗号分隔，按顺序换）。模型报 `404 已下线` 或过载时会依次尝试；只有 `gemini` 后端会换模型，其它后端只做原样重试 |
 | `force_json3` | `true` | 改写 player 里的 `baseUrl` 为 `json3`，**绝大多数情况必须开** |
 | `cache` | `true` | 按「视频 + 语言 + 后端 + 模型」缓存译文，重看不重复花钱 |
 | `prefetch` | `true` | 在 `player` 阶段就把字幕预取并翻译好写缓存，等你开字幕时几乎秒出 |
@@ -241,7 +241,25 @@ api_key      = AQ... 或 AIza...
 注意别把 `https://generativelanguage.googleapis.com/v1beta/interactions` 填给 `openai` 后端：那是格式完全不同的原生接口，
 返回里没有 `choices[0].message.content`，填错会一直拿不到译文。
 
-**模型怎么选**：`gemini-3-flash`（$0.50/$3.00）质量与成本平衡最好；`gemini-flash-lite-latest`（别名，永远指向当前 Flash-Lite 档）最便宜也最不容易 404。
+### Gemini 可用模型 id 对照（2026-11 实测核对）
+
+| 你现在填的 | 还能用吗 | 说明 |
+|---|---|---|
+| `gemini-2.5-flash` | ❌ 404 | 新 key 直接 `no longer available to new users`；2026-12-01 起请求自动转到 `gemini-3.5-flash-lite` |
+| `gemini-3-flash` | ❌ 404 | **这个 id 根本不存在**，库里只有 `gemini-3-flash-preview` |
+| `gemini-3.7-flash` | ⚠️ 能跑但已排期下线 | Google 标注停用 2027-01-28，之后请求自动转到 `gemini-3.8-flash`；月内会一直报 `high demand`（容量紧张） |
+| `gemini-4-hydrogen` | ✅ 存在但**不适合**字幕 | 这个是 4 代非 Flash 档（贵、慢，字幕 3k 字要好几秒），你那次的 `high demand` 就是它 |
+| `gemini-flash-lite-latest` | ✅ **首选** | 别名，Google 每次发新版 Flash-Lite 都热切换到最新，**永不 404** |
+| `gemini-3.5-flash-lite` | ✅ 稳 | 2026-07-21 发布的稳定 Lite 档，最便宜 |
+| `gemini-3.8-flash` | ✅ 质量档 | `$1.50/$7.50`，字幕质量明显好于 Lite |
+| `gemini-3.6-flash` / `gemini-3.5-flash` | ✅ 能用 | 老 Flash，已被 3.8 替代，不必特意用 |
+| `gemini-4-argon` | ✅ 顶级 | 2026-10-13 发布，质量最高也最贵，字幕场景没必要 |
+
+来源：[Gemini API Models](https://aistudio.google.com/docs/models) · [`@google/genai` Interactions `Model` 枚举](https://googleapis.github.io/js-genai/release_docs/types/gaos_models_interactions_model.Model.html) · [Firebase 模型生命周期表](https://firebase.google.cn/docs/ai-logic/models)
+
+**模型怎么选**（`gemini` 后端）：`gemini-flash-lite-latest`（别名，永远指向当前 Flash-Lite 档）最便宜也最不容易 404；要质量用 `gemini-3.8-flash`（$1.50/$7.50）或 `gemini-4-argon`。
+
+> ⚠️ **`gemini-3-flash` 这个 id 不存在**（库里只有 `gemini-3-flash-preview`），填了就是 404。同理 `gemini-2.5-flash` 对新 key 已 404。下面表格里的 id 全部取自 `@google/genai` v3.6.1 的 Interactions `Model` 枚举，照抄即可。
 ⚠️ `gemini-2.5-flash` 已下线——**2026-11 起新 key 直接 404「no longer available」**，12 月 1 日起请求会自动转去 `gemini-3.5-flash-lite`。别再用它。
 `gemini-4-hydrogen` 是给编码/Agent 场景的旗舰，默认思考等级 high，翻字幕**又慢又贵**，不建议。
 
@@ -331,7 +349,7 @@ provider = google
 | 需求 | 推荐 | 理由 |
 | --- | --- | --- |
 | 默认（中文最自然、国内直连） | DeepSeek `deepseek-flash` | 口语化好、JSON 守规矩、不用额外挂代理；插件默认值就是它 |
-| 更高质量的日/韩翻中、俚语多 | Gemini `gemini-3.7-flash` 或 `gemini-3-flash` | 多语种理解强，Flash 档延迟仍低 |
+| 更高质量的日/韩翻中、俚语多 | Gemini `gemini-3.8-flash` | 多语种理解强，Flash 档延迟仍低 |
 | 极低成本跑长视频 | Gemini `gemini-flash-lite-latest`（别名，指向当前 Lite 档） | 便宜到几乎无感，质量对字幕足够，且不会因模型下线变 404 |
 | 已有 OpenAI key | `gpt-5-mini` / `gpt-5-nano` | 稳定，nano 更快更便宜 |
 | 零成本试水 | `provider=google` 免费接口 | 不用 key，但会限流，长视频可能只翻一半 |
@@ -395,13 +413,13 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 这是**上游模型服务过载**，不是插件的问题。三种解法，从省事到彻底：
 
 1. 什么都不做——插件默认 `retry_times=2`，会自动重试；`gemini` 后端还会沿模型链换（`gemini-flash-lite-latest` → `gemini-3.5-flash-lite` → `gemini-3-flash`）兜底；
-2. 把 `模型名` 换成容量更大的档：`gemini-3.7-flash` → `gemini-3-flash`，或干脆换 `deepseek-flash`（最省心，不受 Google 下线节奏影响）；
+2. 把 `模型名` 换成不会下线的档：`gemini-flash-lite-latest`（别名）或 `gemini-3.8-flash`，或干脆换 `deepseek-flash`（最省心，不受 Google 下线节奏影响）；
 3. 干脆把 `字幕方式` 改成 `google` 或 `menu`——这条路完全不经过模型，不可能 503。
 
 ### 弹「404 / model is no longer available」
 
 模型被 Google 下线了（`gemini-2.5-flash` 从 2026-11 起对新 key 就是 404）。插件会自动沿模型链换到下一个可用模型，
-但**你手填的 `模型名` 值得改成不会下线的**：`gemini-flash-lite-latest`（别名）或 `gemini-3-flash`；
+但**你手填的 `模型名` 值得改成不会下线的**：`gemini-flash-lite-latest`（别名）或 `gemini-3.8-flash`；
 也可以直接换 `deepseek-flash`，这条路不受 Google 下线节奏影响。
 
 ### 通知「YT字幕 · 已翻译 0/N 条」，字幕没动

@@ -42,7 +42,7 @@ var DEFAULTS = {
 
   // ---- 重试 ----
   retry_times: 2,
-  fallback_model: 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3-flash',
+  fallback_model: 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash',
 
   // ---- 批量 / 限流 ----
   // 字幕请求是客户端阻塞等待的：片要少、并发要高、总预算要短，否则客户端先超时 → 「字幕加载失败」
@@ -224,7 +224,7 @@ function resolveConfig() {
   if (cfg.subtitle_mode !== 'llm' && cfg.subtitle_mode !== 'menu') cfg.subtitle_mode = 'google';
   cfg.bilingual = toBool(cfg.bilingual, false);
   cfg.retry_times = toInt(cfg.retry_times, 2, 0, 5);
-  cfg.fallback_model = String(cfg.fallback_model || 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3-flash').trim();
+  cfg.fallback_model = String(cfg.fallback_model || 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash').trim();
 
   cfg.force_json3 = toBool(cfg.force_json3, true);
   cfg.cache = toBool(cfg.cache, true);
@@ -1068,9 +1068,10 @@ function isTransientError(msg) {
  * （gemini-2.5-flash 在 2026-11 起对新 key 直接 404「no longer available」）。
  * 所以重试不是「同一个模型再来一次」，而是沿一条模型链往下换：
  *   api_model → fallback_model 列表（逗号分隔，按顺序试）
- * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3-flash
+ * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3.8-flash
+ * 名字都来自 @google/genai v3.6.1 的 Interactions Model 枚举；注意 gemini-3-flash 不存在（只有 gemini-3-flash-preview）
  */
-var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3-flash';
+var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash';
 
 function isGeminiLike(provider) {
   var p = String(provider || '').toLowerCase();
