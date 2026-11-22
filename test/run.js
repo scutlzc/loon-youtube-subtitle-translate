@@ -777,6 +777,21 @@ test('预热用后台长预算：慢接口也能写进缓存（不被 9 秒软�
   });
 });
 
+test('3 秒无响应：区分「请求没通」与「模型慢」', function () {
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: { subtitle_mode: 'llm', cache: false, soft_deadline_ms: 5000 },
+    translate: function (o, cb) { /* 永不回调，模拟挂死 */ }
+  });
+  return sleep(120).then(function () {
+    const hit = r.notes.filter(function (n) { return String(n[0]).indexOf('3 秒无响应') >= 0; });
+    assert.ok(hit.length >= 1, '应弹无响应通知，实际 ' + JSON.stringify(r.notes));
+    // 软截止到了仍要交回结果（原文），不能让客户端干等
+    assert.strictEqual(r.done.length, 1, '软截止应兜底返回');
+  });
+});
+
 /* --------------------------------------------------------------- 输出 */
 Promise.all(pending).then(function () {
 let failed = 0;

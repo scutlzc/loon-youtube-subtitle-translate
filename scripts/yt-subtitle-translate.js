@@ -978,7 +978,8 @@ function translateAll(texts, cfg, videoId, finish) {
       for (var z = 0; z < results.length; z++) if (results[z] !== undefined) done++;
       notifyThrottled('YT字幕 · 已翻译',
         done + '/' + results.length + ' 条',
-        cfg.provider + ' · ' + (nowMs() - t0) + 'ms' + (failures ? ' · 失败 ' + failures + ' 片' : ''),
+        'v' + PLUGIN_VERSION + ' · ' + cfg.provider + ' · ' + (nowMs() - t0) + 'ms' +
+          (failures ? ' · 失败 ' + failures + ' 片' : ''),
         5000);
     }
     return finish(results);
@@ -1016,6 +1017,7 @@ function translateAll(texts, cfg, videoId, finish) {
     if (settled) return;
     settled = true;
     if (softTimer) { clearTimeout(softTimer); softTimer = null; }
+    if (probeTimer) { clearTimeout(probeTimer); probeTimer = null; }
     saveCache(ck, cacheMap);
     return finishDebug();
   }
@@ -1029,12 +1031,24 @@ function translateAll(texts, cfg, videoId, finish) {
     finishOnce();
   }, cfg.soft_deadline_ms);
 
+  var answered = 0;
+
+  // 3 秒一片都没回来 → 基本可以断定是「请求根本没通」（域名被拦/代理没走到/key 前面就卡住），
+  // 而不是「模型慢」。这条通知把两种情况分开，省得在参数上瞎试。
+  var probeTimer = setTimeout(function () {
+    if (settled || answered > 0) return;
+    notifyThrottled('接口 3 秒无响应 · ' + endpointHint(cfg),
+      'v' + PLUGIN_VERSION + ' · ' + cfg.provider + ' · ' + cfg.api_model,
+      '先确认这台设备能连上该域名：关掉本插件单独访问一次接口，或换 Wi-Fi / 蜂窝对比', 30000);
+  }, Math.min(3000, Math.max(1000, cfg.soft_deadline_ms - 1000)));
+
   function dispatch(chunk) {
     var input = [];
     for (var q = 0; q < chunk.length; q++) input.push(texts[chunk[q]]);
     inflight++;
     callProviderWithRetry(input, cfg, function (err, out) {
       inflight--;
+      answered++;
       if (!err && out && out.length === input.length) {
         for (var w = 0; w < chunk.length; w++) {
           var val = out[w];
@@ -1047,7 +1061,7 @@ function translateAll(texts, cfg, videoId, finish) {
         if (failures === 1) {
           notifyThrottled('字幕翻译失败 · ' + endpointHint(cfg),
             String(err || '返回条数不一致').slice(0, 110),
-            '后端 ' + cfg.provider + ' · 模型 ' + cfg.api_model +
+            'v' + PLUGIN_VERSION + ' · 后端 ' + cfg.provider + ' · 模型 ' + cfg.api_model +
               (out ? ' · 只回 ' + out.length + '/' + input.length + ' 条' : '') +
               ' · 检查 api_key 与接口地址',
             60000);
@@ -1117,6 +1131,8 @@ function isTransientError(msg) {
  * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3.8-flash
  * 名字都来自 @google/genai v3.6.1 的 Interactions Model 枚举；注意 gemini-3-flash 不存在（只有 gemini-3-flash-preview）
  */
+var PLUGIN_VERSION = '2026.11.22.11';
+
 var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash';
 
 function isGeminiLike(provider) {
