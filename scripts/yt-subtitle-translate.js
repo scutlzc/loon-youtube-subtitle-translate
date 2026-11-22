@@ -102,6 +102,15 @@ function notify(title, subtitle, body) {
   } catch (e) { /* 静默 */ }
 }
 
+// 同一类通知在 windowMs 内只弹一次，避免一次播放刷屏
+function notifyThrottled(title, subtitle, body, windowMs) {
+  var key = 'ytst.notice.' + title;
+  var last = parseInt(readStore(key) || '0', 10);
+  if (last && nowMs() - last < (windowMs || 600000)) return;
+  writeStore(String(nowMs()), key);
+  notify(title, subtitle, body);
+}
+
 // 轻量字符串哈希（FNV-1a + 乘法扰动），只用于缓存 key，不需要密码学强度
 function hash(str) {
   var s = String(str);
@@ -577,6 +586,7 @@ function saveCache(key, map) {
  * finish(results) 中未被翻译的位置为 undefined，调用方保留原文
  */
 function translateAll(texts, cfg, videoId, finish) {
+  var t0 = nowMs();
   var deadline = nowMs() + cfg.timeout_ms;
   var results = new Array(texts.length);
   var ck = cfg.cache ? cacheKeyOf(cfg, videoId) : null;
@@ -590,7 +600,19 @@ function translateAll(texts, cfg, videoId, finish) {
     else pending.push(i);
   }
 
-  if (!pending.length) return finish(results);
+  function finishDebug() {
+    if (cfg.debug) {
+      var done = 0;
+      for (var z = 0; z < results.length; z++) if (results[z] !== undefined) done++;
+      notifyThrottled('YT字幕 · 已翻译',
+        done + '/' + results.length + ' 条',
+        cfg.provider + ' · ' + (nowMs() - t0) + 'ms' + (failures ? ' · 失败 ' + failures + ' 片' : ''),
+        5000);
+    }
+    return finish(results);
+  }
+
+  if (!pending.length) return finishDebug();
   if (pending.length > cfg.max_cues) pending = pending.slice(0, cfg.max_cues);
 
   // 按条数与字符预算切片
@@ -616,12 +638,12 @@ function translateAll(texts, cfg, videoId, finish) {
   function step() {
     if (ci >= chunks.length) {
       saveCache(ck, cacheMap);
-      return finish(results);
+      return finishDebug();
     }
     if (nowMs() > deadline) {
       if (cfg.debug) console.log('[YT字幕] 超时，剩余 ' + (chunks.length - ci) + ' 片未翻译');
       saveCache(ck, cacheMap);
-      return finish(results);
+      return finishDebug();
     }
 
     var chunk = chunks[ci++];
@@ -638,8 +660,11 @@ function translateAll(texts, cfg, videoId, finish) {
         }
       } else {
         failures++;
-        if (cfg.debug && failures <= 2) {
-          notify('字幕翻译失败', String(err || '返回条数不一致').slice(0, 80), String(out ? 'got ' + out.length + '/' + input.length : ''));
+        if (failures <= 2) {
+          notifyThrottled('字幕翻译失败',
+            String(err || '返回条数不一致').slice(0, 90),
+            (out ? 'got ' + out.length + '/' + input.length + ' 条 · ' : '') + '检查 api_key / api_model / 接口地址',
+            180000);
         }
       }
       step();

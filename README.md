@@ -47,6 +47,10 @@ loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subt
 
 装完填 `api_key`，再按下面第 3 步装证书即可。
 
+> **国内网络提示**：插件里的脚本地址是 GitHub raw，连不上 raw 的环境（脚本拉不下来＝完全没反应）请改装
+> `YouTube-Subtitle-Translate.cdn.plugin`，它只有脚本地址不同，走 jsDelivr CDN：
+> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22/YouTube-Subtitle-Translate.cdn.plugin`
+
 > **版本要求**：主插件用 Loon 3.5.1 (983) 起的新版 Script 语法（`script("...", {${参数}})`），
 > 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
 > `YouTube-Subtitle-Translate.legacy.plugin`（旧的 `script-path=` 写法，参数表单一样能编辑，只是数字都按字符串传）。
@@ -306,6 +310,30 @@ provider = google
 ---
 
 ## 七、排错清单
+
+**字幕没翻译？按这个顺序查（前一条排除掉再往下走）**
+
+1. **脚本有没有被加载**
+   插件里的脚本地址是 GitHub raw。国内常连不上 raw，插件本体装上了、脚本却拉不下来，表现就是完全没反应。
+   去 Safari 打开下面这个地址，打不开就说明是这个问题：
+
+   ```
+   https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js
+   ```
+
+   打不开 → 改装 `YouTube-Subtitle-Translate.cdn.plugin`（同一份配置，脚本改走 jsDelivr），并确保 `cdn.jsdelivr.net` 在 Loon 里走代理。
+2. **脚本有没有被触发**
+   把 `debug` 打开，播放视频，然后看手机通知或 Loon 的「日志」页搜 `YT字幕`。
+   - 一条都没有 → 请求没经过 MITM/脚本：查 MITM 开关、证书信任、`youtubei.googleapis.com` 与 `www.youtube.com` 是否走代理、是否被 QUIC 绕过；
+   - 有 `已改写` → 脚本命中了，往下看第 3 条。
+3. **接口有没有在报错**
+   现在**翻译失败会直接弹通知**（不用开 `debug`），内容形如 `字幕翻译失败 · HTTP 401`。
+   常见原因：`api_key` 没填或填错、`api_model` 名不对（比如 DeepSeek 写成了 `gpt-4o-mini`）、余额不足、`api_base_url` 少了 `/chat/completions`。
+4. **有没有别的 YouTube 脚本抢同一个响应**
+   去广告、SponsorBlock、封面替换这类插件也会改写 `/youtubei/v1/player`。两个脚本处理同一个响应时，后写的会覆盖前写的——
+   一旦 `force_json3` 的改写被覆盖，字幕回来就是 protobuf，翻译不出来。临时关掉其他 YouTube 相关插件验证。
+5. **客户端缓存**
+   改完参数把 YouTube App 从后台划掉重开；网页版强制刷新。
 
 **插件详情页里看不到参数表单 / 没有可编辑项**
 
