@@ -32,16 +32,20 @@ test/run.js                            # 本地自测（Node，模拟 Loon 运�
 Loon →「插件」→ 右上角 `+` →「从 URL 安装」：
 
 ```
-https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/YouTube-Subtitle-Translate.plugin
+https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22/YouTube-Subtitle-Translate.plugin
 ```
 
 或者直接在 Safari 打开：
 
 ```
-loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/YouTube-Subtitle-Translate.plugin
+loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22/YouTube-Subtitle-Translate.plugin
 ```
 
-装完填 `api_key`，再按下面第 3 步装证书即可。仓库里的 `.plugin` 已经全部指向 raw 链接，改完脚本推上去，手机上重新更新插件就生效。
+> 上面是**固定版本**链接（`v2026.11.22`），装的永远是这个版本，raw 没有缓存延迟。
+> 想自动跟随最新提交，把路径里的 `v2026.11.22` 换成 `main`；但 GitHub raw 有约 5 分钟 CDN 缓存，
+> 刚推上去的一两分钟内可能会拿到旧文件，遇到「更新完还是老样子」等几分钟再更新一次即可。
+
+装完填 `api_key`，再按下面第 3 步装证书即可。
 
 > **版本要求**：主插件用 Loon 3.5.1 (983) 起的新版 Script 语法（`script("...", {${参数}})`），
 > 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
