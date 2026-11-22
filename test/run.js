@@ -505,7 +505,8 @@ test('gemini 原生：HTTP 401 通知里带状态码', function () {
   });
   assert.strictEqual(JSON.stringify(r.done), "[{}]", '失败时原样放行');
   const joined = JSON.stringify(r.notes);
-  assert.ok(/HTTP 401/.test(joined), '应弹出带状态码的失败通知');
+  assert.ok(/401/.test(joined), '应弹出带状态码的失败通知');
+  assert.ok(/授权失败|key 不对/.test(joined), '401 应翻成「授权失败」并说明原因');
 });
 
 /* ------------------------------------------------- 插件参数类型（新语法） */
@@ -805,6 +806,17 @@ test('接口请求带浏览器 UA 与 Accept（少了会被 WAF 挂住）', func
     assert.ok(/Mozilla\/5\.0/.test(h['User-Agent'] || ''), 'UA 不对：' + JSON.stringify(h));
     assert.strictEqual(h['Accept'], 'application/json');
     assert.strictEqual(h['Authorization'], 'Bearer sk-test');
+  });
+});
+
+test('key 里混进空格/引号/Bearer 前缀也能洗干净', function () {
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: { subtitle_mode: 'llm', cache: false, provider: 'openai', api_key: '  "Bearer sk-abc123"\n' }
+  });
+  return sleep(60).then(function () {
+    assert.strictEqual(r.calls[0].headers['Authorization'], 'Bearer sk-abc123', '实际 ' + r.calls[0].headers['Authorization']);
   });
 });
 

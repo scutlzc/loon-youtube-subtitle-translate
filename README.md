@@ -32,13 +32,13 @@ test/run.js                            # 本地自测（Node，模拟 Loon 运�
 Loon →「插件」→ 右上角 `+` →「从 URL 安装」：
 
 ```
-https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.14/YouTube-Subtitle-Translate.plugin
+https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.15/YouTube-Subtitle-Translate.plugin
 ```
 
 或者直接在 Safari 打开：
 
 ```
-loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.14/YouTube-Subtitle-Translate.plugin
+loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.15/YouTube-Subtitle-Translate.plugin
 ```
 
 > 上面是**固定版本**链接（`v2026.11.22.13`），装到的就是这个版本，raw 立刻生效。
@@ -50,7 +50,7 @@ loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subt
 
 > **国内网络提示**：插件里的脚本地址是 GitHub raw，连不上 raw 的环境（脚本拉不下来＝完全没反应）请改装
 > `YouTube-Subtitle-Translate.cdn.plugin`，它只有脚本地址不同，走 jsDelivr CDN：
-> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.14/YouTube-Subtitle-Translate.cdn.plugin`
+> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.15/YouTube-Subtitle-Translate.cdn.plugin`
 
 > **版本要求**：主插件用 Loon 3.5.1 (983) 起的新版 Script 语法（`script("...", {${参数}})`），
 > 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
@@ -437,6 +437,31 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 1. 什么都不做——插件默认 `retry_times=2`，会自动重试；`gemini` 后端还会沿模型链换（`gemini-flash-lite-latest` → `gemini-3.5-flash-lite` → `gemini-3-flash`）兜底；
 2. 把 `模型名` 换成不会下线的档：`gemini-flash-lite-latest`（别名）或 `gemini-3.8-flash`，或干脆换 `deepseek-flash`（最省心，不受 Google 下线节奏影响）；
 3. 干脆把 `字幕方式` 改成 `google` 或 `menu`——这条路完全不经过模型，不可能 503。
+
+### 通知「授权失败(401)」/「余额不足(402)」
+
+v15 起把 HTTP 状态码翻译成了结论，通知里直接写着该改什么：
+
+| 通知 | 含义 | 处理 |
+|---|---|---|
+| `授权失败(401)：key 不对、已失效或带了多余空格` | DeepSeek 侧拒绝了这个 key | ① key 重新复制一次（别带 `Bearer ` 前缀——插件会自动剥掉，但前后空格、换行、引号以前会让它失效；v15 起也会自动清洗）；② 确认这个 key 属于 `platform.deepseek.com` 而不是别家中转；③ 用 curl 在电脑上验一次（见下） |
+| `余额不足(402)` | 账户没余额 | 充值后再试；DeepSeek 新用户赠金用完就是这个 |
+| `无权限(403)` | key 有但模型无权限/被风控 | 换 `deepseek-flash` 再试，或换 key |
+| `地址或模型不存在(404)` | 接口地址或模型名填错 | 地址填 `https://api.deepseek.com/chat/completions`，模型填 `deepseek-flash` |
+
+在电脑上验 key（能返回 JSON 就是 key 没问题，问题在手机侧配置）：
+
+```bash
+KEY=sk-你的key
+curl -sS -m 20 https://api.deepseek.com/chat/completions \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"model":"deepseek-flash","messages":[{"role":"user","content":"只回两个字：收到"}]}' \
+  -w '\n--- %{http_code} %{time_total}s\n'
+```
+
+- `200` + 正常 JSON → key 好的，问题在插件参数（尤其 `API Key` 里是否混了不可见字符）
+- `401` → key 本身不行，去控制台重新生成
+- `402` → 没余额
 
 ### 通知「接口 3 秒无响应」而浏览器能打开同一个域名
 

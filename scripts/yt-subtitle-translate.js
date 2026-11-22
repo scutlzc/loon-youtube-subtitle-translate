@@ -172,6 +172,20 @@ function stripTags(s) {
  * 接口地址最容易填错的三处：只写到域名、写成 /v1、或者干脆忘了 /chat/completions。
  * 这里补全，省掉「填错就静默超时」的坑。
  */
+/*
+ * key 是从聊天窗口/笔记里粘过来的，常见的脏东西：前后空格、换行、包一层引号、
+ * 甚至把 "Bearer " 也一起粘进来（再拼一次就成了 Bearer Bearer sk-…→ 401）。
+ * 这里统一洗干净，省掉「明明复制对了却授权失败」。
+ */
+function normalizeApiKey(v) {
+  var k = String(v == null ? '' : v);
+  k = k.replace(/[\r\n\t]/g, '').trim();
+  k = k.replace(/^["'`]+|["'`]+$/g, '');
+  k = k.replace(/^Bearer\s+/i, '');
+  k = k.replace(/\s+/g, '');
+  return k;
+}
+
 function normalizeBaseUrl(url, provider) {
   var u = String(url || '').trim();
   if (!u) return u;
@@ -232,7 +246,7 @@ function resolveConfig() {
     }
   }
   cfg.api_base_url = String(cfg.api_base_url || DEFAULTS.api_base_url).trim();
-  cfg.api_key = String(cfg.api_key || '').trim();
+  cfg.api_key = normalizeApiKey(cfg.api_key);
   cfg.api_model = String(cfg.api_model || DEFAULTS.api_model).trim();
   cfg.target_lang = String(cfg.target_lang || 'zh-CN').trim();
   cfg.source_lang = String(cfg.source_lang || 'auto').trim();
@@ -1139,6 +1153,20 @@ function splitNetworkProbe(cfg) {
   }
 }
 
+/*
+ * 把 401/402/403/404 翻成一句人话，通知里直接告诉用户该改什么。
+ */
+function httpErrorHint(status, data) {
+  var raw = String(data || '').slice(0, 120);
+  var tail = raw ? ' · ' + raw : '';
+  if (status === 401) return '授权失败(401)：key 不对、已失效或带了多余空格' + tail;
+  if (status === 402) return '余额不足(402)：去控制台充值后再试' + tail;
+  if (status === 403) return '无权限(403)：key 没有该模型权限或被风控' + tail;
+  if (status === 404) return '地址或模型不存在(404)：核对接口地址与模型名' + tail;
+  if (status === 429) return '请求过多(429)：降并发或稍后再试' + tail;
+  return 'HTTP ' + status + tail;
+}
+
 function endpointHint(cfg) {
   var u = String(cfg.api_base_url || '');
   var m = u.match(/^https?:\/\/([^\/]+)/);
@@ -1185,7 +1213,7 @@ function isTransientError(msg) {
  * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3.8-flash
  * 名字都来自 @google/genai v3.6.1 的 Interactions Model 枚举；注意 gemini-3-flash 不存在（只有 gemini-3-flash-preview）
  */
-var PLUGIN_VERSION = '2026.11.22.14';
+var PLUGIN_VERSION = '2026.11.22.15';
 
 var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash';
 
@@ -1378,7 +1406,7 @@ function callOpenAI(texts, cfg, cb) {
     if (err) return cb(String(err));
     var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
     if (status && (status < 200 || status >= 300)) {
-      return cb('HTTP ' + status + ' ' + String(data || '').slice(0, 160));
+      return cb(httpErrorHint(status, data));
     }
     var content = '';
     try {
@@ -1483,7 +1511,7 @@ function callGeminiNative(texts, cfg, cb) {
     if (err) return cb(String(err));
     var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
     if (status && (status < 200 || status >= 300)) {
-      return cb('HTTP ' + status + ' ' + String(data || '').slice(0, 160));
+      return cb(httpErrorHint(status, data));
     }
     var j;
     try { j = JSON.parse(data); } catch (e) { return cb('响应非 JSON：' + String(data || '').slice(0, 120)); }
@@ -1533,7 +1561,7 @@ function callDeepL(texts, cfg, cb) {
     if (err) return cb(String(err));
     var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
     if (status && (status < 200 || status >= 300)) {
-      return cb('HTTP ' + status + ' ' + String(data || '').slice(0, 160));
+      return cb(httpErrorHint(status, data));
     }
     try {
       var j = JSON.parse(data);
@@ -1627,7 +1655,7 @@ function callCustom(texts, cfg, cb) {
     if (err) return cb(String(err));
     var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
     if (status && (status < 200 || status >= 300)) {
-      return cb('HTTP ' + status + ' ' + String(data || '').slice(0, 160));
+      return cb(httpErrorHint(status, data));
     }
     var j;
     try {
