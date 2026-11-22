@@ -29,7 +29,7 @@ api_base_url = input,"https://api.deepseek.com/chat/completions",type=string,tag
 api_key = input,"",type=string,tag=API Key,desc=翻译服务的密钥；google 后端可留空
 api_model = input,"deepseek-flash",type=string,tag=模型名,desc=openai 与 custom 用 默认 deepseek-flash；gemini 填 gemini-3.7-flash 或 gemini-2.5-flash；deepl 与 google 忽略此项
 target_lang = select,"zh-CN","zh-TW","ja","en","ko",type=string,tag=目标语言,desc=字幕要翻成的语言
-subtitle_mode = select,"google","menu","llm",type=string,tag=字幕方式,desc=google 由 YouTube 服务端直接翻成目标语言 秒出免费；menu 解锁播放器自动翻译全语言 你自己在里面挑；llm 用上面配的模型逐条翻 质量最好但慢
+subtitle_mode = select,"menu","google","llm",type=string,tag=字幕方式,desc=menu 推荐 解锁播放器自动翻译全语言 挑一次就记住 最稳；google 自动给字幕地址加 tlang 秒出但部分视频会被 YouTube 拒；llm 用上面配的模型逐条翻 质量最好但慢
 bilingual = switch,false,tag=双语字幕,desc=开启后每条字幕显示两行 上一行原文 下一行译文
 source_lang = input,"auto",type=string,tag=源语言,desc=auto 表示自动判断
 cues_per_request = input,80,type=number,tag=每次条数,desc=一次请求最多翻译多少条字幕；字幕请求是客户端阻塞等待的 太小会拖慢首屏

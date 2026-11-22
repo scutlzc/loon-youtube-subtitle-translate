@@ -620,6 +620,37 @@ test('两条 tlang 打架：去重整成一条后仍能拿到译文', function (
   });
 });
 
+test('默认字幕方式为 menu：不改写 tlang 只解锁菜单', function () {
+  const body = '{"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":['
+    + '{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc\\u0026lang=en\\u0026fmt=pb","isTranslatable":true}]}}}';
+  const r = run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: body,
+    argument: { prefetch: false }           // 不传 subtitle_mode，走默认
+  });
+  const out = r.done[0].body;
+  assert.ok(out.indexOf('tlang=') < 0, '默认不应注入 tlang');
+  const parsed = JSON.parse(out);
+  assert.ok(parsed.captions.playerCaptionsTracklistRenderer.translationLanguages.length > 100, '默认应解锁语言表');
+});
+
+test('llm 全部失败：通知里带主机与模型，并触发一次接口自检', function () {
+  const body = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] });
+  let n = 0;
+  const r = run({
+    url: TIMEDTEXT,
+    body: body,
+    argument: { subtitle_mode: 'llm', retry_times: 0, cache: false },
+    translate: function (o, cb) { n++; cb(null, { status: 500 }, 'boom'); }
+  });
+  return sleep(30).then(function () {
+    assert.strictEqual(n, 2, '一片失败 + 一次 Hello 自检，实际 ' + n + ' 次');
+    const titles = r.notes.map(function (x) { return x[0]; }).join(' | ');
+    assert.ok(/字幕翻译失败/.test(titles), '应有失败通知：' + titles);
+    assert.ok(/api\.deepseek\.com/.test(titles), '通知里应带主机：' + titles);
+  });
+});
+
 /* --------------------------------------------------------------- 输出 */
 Promise.all(pending).then(function () {
 let failed = 0;

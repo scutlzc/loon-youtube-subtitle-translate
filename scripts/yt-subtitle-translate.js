@@ -37,7 +37,7 @@ var DEFAULTS = {
   // ---- 字幕来源 ----
   // google: 让 YouTube 自己返回目标语言字幕（服务端翻译，零延迟零成本）
   // llm:    用下面的翻译后端逐条翻（质量可控，但有往返延迟）
-  subtitle_mode: 'google',
+  subtitle_mode: 'menu',
   bilingual: false,
 
   // ---- 重试 ----
@@ -220,7 +220,7 @@ function resolveConfig() {
   cfg.timeout_ms = toInt(cfg.timeout_ms, 20000, 2000, 110000);
   cfg.concurrency = toInt(cfg.concurrency, 3, 1, 6);
 
-  cfg.subtitle_mode = String(cfg.subtitle_mode || 'google').toLowerCase().trim();
+  cfg.subtitle_mode = String(cfg.subtitle_mode || 'menu').toLowerCase().trim();
   if (cfg.subtitle_mode !== 'llm' && cfg.subtitle_mode !== 'menu') cfg.subtitle_mode = 'google';
   cfg.bilingual = toBool(cfg.bilingual, false);
   cfg.retry_times = toInt(cfg.retry_times, 2, 0, 5);
@@ -435,7 +435,7 @@ function prefetchTracks(cfg, body) {
 
 function prefetchOne(cfg, url) {
   try {
-    $httpClient.get({ url: url, headers: {} }, function (err, resp, data) {
+    $httpClient.get({ url: url, headers: subHeaders() }, function (err, resp, data) {
       if (err || !data) return;
       var root;
       try { root = JSON.parse(data); } catch (e) { return; }
@@ -675,7 +675,7 @@ function refetchSubtitle(urls, fmt, onGive) {
     if (i >= urls.length) return onGive(null, null, null);
     var u = urls[i++];
     try {
-      $httpClient.get({ url: u, headers: {} }, function (err, resp, data) {
+      $httpClient.get({ url: u, headers: subHeaders() }, function (err, resp, data) {
         if (!err && data) {
           var parsed = parseSubtitleBody(fmt, String(data));
           if (parsed && parsed.texts.length) return onGive(String(data), parsed, u);
@@ -696,6 +696,14 @@ function refetchSubtitle(urls, fmt, onGive) {
  * 宁可显示原文，也不让客户端弹「字幕加载出错」。
  */
 function salvageSubtitle(cfg, fmt, url) {
+  try { return salvageSubtitleInner(cfg, fmt, url); }
+  catch (e) {
+    if (cfg.debug) console.log('[YT字幕] 自救流程异常：' + e);
+    return $done({});
+  }
+}
+
+function salvageSubtitleInner(cfg, fmt, url) {
   var candidates = [];
   var fixed = dedupeTlang(url);
   if (fixed !== url) candidates.push(fixed);
@@ -707,8 +715,11 @@ function salvageSubtitle(cfg, fmt, url) {
     if (!data) {
       notifyThrottled('字幕取不到内容',
         '目标语言和原文都没拉到',
-        '可把「字幕方式」换成 menu 或 llm', 600000);
-      return $done({});
+        '可把「字幕方式」换成 menu（推荐）或 llm', 600000);
+      // 返回一个合法但空的字幕，客户端只会显示「没有字幕」，不会报「加载失败」
+      if (fmt === 'json3') return $done({ body: '{"events":[]}' });
+      if (fmt === 'vtt') return $done({ body: 'WEBVTT\n' });
+      return $done({ body: '<timedtext></timedtext>' });
     }
     var stillTranslated = usedUrl && /[?&]tlang=/.test(usedUrl);
     if (cfg.bilingual && stillTranslated && fmt === 'json3') {
@@ -724,7 +735,7 @@ function salvageSubtitle(cfg, fmt, url) {
 
 function mergeBilingual(cfg, zh, origUrl) {
   try {
-    $httpClient.get({ url: stripQueryParam(origUrl, 'tlang'), headers: {} }, function (err, resp, data) {
+    $httpClient.get({ url: stripQueryParam(origUrl, 'tlang'), headers: subHeaders() }, function (err, resp, data) {
       if (err || !data) return $done({});
       var srcRoot;
       try { srcRoot = JSON.parse(data); } catch (e) { return $done({}); }
@@ -817,6 +828,23 @@ function handleTranscript(cfg) {
 }
 
 /* ================================ 输出工具 ================================ */
+
+// 自己回拉字幕时一定要带像样的头，裸 GET 会被当成机器人返回 "Sorry..." 页
+function subHeaders() {
+  var h = {
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+  };
+  var src = ($request && $request.headers) ? $request.headers : null;
+  if (src) {
+    for (var k in src) {
+      if (Object.prototype.hasOwnProperty.call(src, k) && !/^(host|content-length|content-encoding)$/i.test(k)) {
+        h[k] = src[k];
+      }
+    }
+  }
+  return h;
+}
 
 function reqUrl() {
   return ($request && $request.url) ? String($request.url) : '';
@@ -970,11 +998,14 @@ function translateAll(texts, cfg, videoId, finish) {
         }
       } else {
         failures++;
-        if (failures <= 2) {
-          notifyThrottled('字幕翻译失败',
-            String(err || '返回条数不一致').slice(0, 90),
-            (out ? 'got ' + out.length + '/' + input.length + ' 条 · ' : '') + '检查 api_key / api_model / 接口地址',
-            180000);
+        if (failures === 1) {
+          notifyThrottled('字幕翻译失败 · ' + endpointHint(cfg),
+            String(err || '返回条数不一致').slice(0, 110),
+            '后端 ' + cfg.provider + ' · 模型 ' + cfg.api_model +
+              (out ? ' · 只回 ' + out.length + '/' + input.length + ' 条' : '') +
+              ' · 检查 api_key 与接口地址',
+            60000);
+          probeApi(cfg);        // 顺手拿一句 "Hello" 试一次，告诉你是接口坏了还是字幕侧坏了
         }
       }
       pump();
@@ -992,6 +1023,38 @@ function translateAll(texts, cfg, videoId, finish) {
   }
 
   pump();
+}
+
+function endpointHint(cfg) {
+  var u = String(cfg.api_base_url || '');
+  var m = u.match(/^https?:\/\/([^\/]+)/);
+  if (m) return m[1];
+  var p = String(cfg.provider || '').toLowerCase();
+  if (p === 'gemini' || p === 'googleai' || p === 'interactions') return 'generativelanguage.googleapis.com';
+  if (p === 'google') return 'translate.googleapis.com';
+  if (p === 'deepl') return 'api.deepl.com';
+  return p || '未配置地址';
+}
+
+/*
+ * 失败时用一句极短的文本再试一次接口：
+ *   接口能通   → 通知「接口正常」，说明问题在字幕侧（条数/JSON/超时）
+ *   接口也不通 → 直接把状态码摊出来，省得瞎猜 api_key 还是模型名
+ */
+function probeApi(cfg) {
+  var key = 'ytst.probe';
+  if (readStore(key)) return;                       // 10 分钟内只探一次
+  writeStore(String(nowMs()), key);
+  callProviderWithRetry(['Hello'], cfg, function (err, out) {
+    if (!err && out && out.length) {
+      return notifyThrottled('接口正常 · ' + endpointHint(cfg),
+        '模型 ' + cfg.api_model + ' 能翻 ' + String(out[0]).slice(0, 40),
+        '说明问题在字幕侧：看条数、JSON 格式或超时设置', 600000);
+    }
+    notifyThrottled('接口不通 · ' + endpointHint(cfg),
+      String(err || '空返回').slice(0, 110),
+      '模型 ' + cfg.api_model + ' · 先核对 api_key 与接口地址', 600000);
+  });
 }
 
 function isTransientError(msg) {
