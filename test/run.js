@@ -35,6 +35,8 @@ function run(opts) {
 
   const sandbox = {
     console: { log: function () {} },
+    setTimeout: function (fn) { return setTimeout(fn, 1); },
+    clearTimeout: clearTimeout,
     JSON, Date, Math, Object, Array, String, Number, RegExp, Boolean, Error,
     parseInt, parseFloat, isNaN, encodeURIComponent, decodeURIComponent,
     $request: { url: opts.url, headers: {} },
@@ -172,9 +174,19 @@ test('llm 模式 + 双语：一次请求即可合成两行', function () {
   assert.strictEqual(out.events[0].segs[0].utf8, 'Hi\n译:Hi');
 });
 
+const pending = [];
+
 function test(name, fn) {
   try {
-    fn();
+    const out = fn();
+    if (out && typeof out.then === 'function') {
+      pending.push(out.then(function () {
+        results.push(['PASS', name]);
+      }, function (e) {
+        results.push(['FAIL', name + ' :: ' + e.message]);
+      }));
+      return;
+    }
     results.push(['PASS', name]);
   } catch (e) {
     results.push(['FAIL', name + ' :: ' + e.message]);
@@ -414,6 +426,7 @@ test('HTTP 500：保留原文字幕不破坏结构', function () {
   const r = run({
     url: TIMEDTEXT,
     body: body,
+    argument: { retry_times: 0 },
     translate: function (o, cb) { cb(null, { status: 500 }, 'boom'); }
   });
   assert.strictEqual(JSON.stringify(r.done), "[{}]", '全部失败时应原样放行');
@@ -526,7 +539,89 @@ test('插件参数对象：force_json3 为 Boolean false 时不改写 player', f
   assert.strictEqual(JSON.stringify(r.done), "[{}]", 'Boolean false 应走放行分支');
 });
 
+/* ---------------------------------------------------- 5. 重试与回退 */
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+test('503 重试：第一次 503 第二次成功', function () {
+  let n = 0;
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: { subtitle_mode: 'llm', retry_times: 2, cache: false },
+    translate: function (o, cb) {
+      n++;
+      if (n === 1) return cb(null, { status: 503 }, '{"error":{"message":"high demand"}}');
+      const texts = extractUserTexts(o.body);
+      cb(null, { status: 200 }, JSON.stringify({ choices: [{ message: { content: JSON.stringify(texts.map(function (t) { return '译:' + t; })) } }] }));
+    }
+  });
+  return sleep(60).then(function () {
+    assert.strictEqual(n, 2, '应重试一次，实际调用 ' + n + ' 次');
+    assert.ok(r.done[0].body.indexOf('译:Hi') >= 0, '重试成功后应写入译文');
+  });
+});
+
+test('gemini 503：自动换到 fallback 模型重试', function () {
+  const seen = [];
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: {
+      provider: 'gemini', api_base_url: '', api_model: 'gemini-3.7-flash',
+      subtitle_mode: 'llm', retry_times: 2, cache: false
+    },
+    translate: function (o, cb) {
+      const body = JSON.parse(o.body);
+      seen.push(body.model);
+      if (seen.length === 1) return cb(null, { status: 503 }, '{"error":{"message":"model is currently experiencing high demand"}}');
+      cb(null, { status: 200 }, JSON.stringify({ output_text: JSON.stringify(['译:Hi']) }));
+    }
+  });
+  return sleep(60).then(function () {
+    assert.strictEqual(seen.length, 2, '应重试一次');
+    assert.strictEqual(seen[0], 'gemini-3.7-flash');
+    assert.strictEqual(seen[1], 'gemini-2.5-flash', '兜底应换模型，实际 ' + seen[1]);
+    assert.ok(r.done[0].body.indexOf('译:Hi') >= 0);
+  });
+});
+
+test('tlang 返回空字幕：回退拉原文，不让客户端报错', function () {
+  const orig = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] });
+  const r = run({
+    url: 'https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=json3&tlang=zh-Hans',
+    body: JSON.stringify({ events: [] }),
+    argument: { subtitle_mode: 'google' },
+    translate: function (o, cb) {
+      assert.ok(o.url.indexOf('tlang=') < 0, '回退请求应剥掉 tlang：' + o.url);
+      assert.ok(/fmt=json3/.test(o.url), '回退仍要是 json3');
+      cb(null, { status: 200 }, orig);
+    }
+  });
+  return sleep(20).then(function () {
+    assert.ok(r.done[0].body && r.done[0].body.indexOf('Hi') >= 0, '应回退成原文，实际 ' + JSON.stringify(r.done[0]).slice(0, 120));
+    assert.ok(r.notes.length >= 1, '应有一次提示');
+  });
+});
+
+test('两条 tlang 打架：去重整成一条后仍能拿到译文', function () {
+  const zh = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: '你好' }] }] });
+  const r = run({
+    url: 'https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=json3&tlang=zh-Hans&tlang=zh-Hans',
+    body: 'Bad Request',
+    argument: { subtitle_mode: 'google' },
+    translate: function (o, cb) {
+      const n = (o.url.match(/tlang=/g) || []).length;
+      assert.strictEqual(n, 1, '去重后只能剩一条 tlang：' + o.url);
+      cb(null, { status: 200 }, zh);
+    }
+  });
+  return sleep(20).then(function () {
+    assert.ok(r.done[0].body && r.done[0].body.indexOf('你好') >= 0, '应拿到译文，实际 ' + JSON.stringify(r.done[0]).slice(0, 100));
+  });
+});
+
 /* --------------------------------------------------------------- 输出 */
+Promise.all(pending).then(function () {
 let failed = 0;
 results.forEach(function (row) {
   if (row[0] === 'FAIL') failed++;
@@ -534,3 +629,4 @@ results.forEach(function (row) {
 });
 console.log('\n' + (results.length - failed) + '/' + results.length + ' passed');
 process.exit(failed ? 1 : 0);
+});

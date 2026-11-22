@@ -40,6 +40,10 @@ var DEFAULTS = {
   subtitle_mode: 'google',
   bilingual: false,
 
+  // ---- 重试 ----
+  retry_times: 2,
+  fallback_model: 'gemini-2.5-flash',
+
   // ---- 批量 / 限流 ----
   // 字幕请求是客户端阻塞等待的：片要少、并发要高、总预算要短，否则客户端先超时 → 「字幕加载失败」
   cues_per_request: 80,
@@ -219,6 +223,8 @@ function resolveConfig() {
   cfg.subtitle_mode = String(cfg.subtitle_mode || 'google').toLowerCase().trim();
   if (cfg.subtitle_mode !== 'llm' && cfg.subtitle_mode !== 'menu') cfg.subtitle_mode = 'google';
   cfg.bilingual = toBool(cfg.bilingual, false);
+  cfg.retry_times = toInt(cfg.retry_times, 2, 0, 5);
+  cfg.fallback_model = String(cfg.fallback_model || 'gemini-2.5-flash').trim();
 
   cfg.force_json3 = toBool(cfg.force_json3, true);
   cfg.cache = toBool(cfg.cache, true);
@@ -574,16 +580,34 @@ function collectVtt(body) {
 
 /* ================================ 3. timedtext 处理 ================================ */
 
+function urlFmt(u) {
+  var m = String(u || '').match(/[?&]fmt=([^&]+)/);
+  var f = m ? m[1].toLowerCase() : '';
+  if (f.indexOf('json') === 0) return 'json3';
+  if (f === 'vtt') return 'vtt';
+  if (f.indexOf('srv') === 0) return 'srv3';
+  if (f.indexOf('ttml') >= 0) return 'ttml';
+  return 'json3';
+}
+
 function handleTimedtext(cfg) {
   var body = $response && $response.body;
+  var tlangPath = cfg.subtitle_mode !== 'llm' && /[?&]tlang=/.test(reqUrl());
+  var status = $response && $response.status ? parseInt($response.status, 10) : 200;
+
+  // tlang 这条失败时（报错页 / 空 body / 格式认不出）先自救，别急着判「不支持」
+  if (tlangPath && (status >= 400 || typeof body !== 'string' || !body || !detectFormat(body))) {
+    return salvageSubtitle(cfg, typeof body === 'string' && body ? (detectFormat(body) || urlFmt(reqUrl())) : urlFmt(reqUrl()), reqUrl());
+  }
+
   if (typeof body !== 'string' || !body) return $done({});
   if (body.length > MAX_BODY_BYTES) return $done({});
 
   var fmt = detectFormat(body);
   if (!fmt) return hintUnsupported(cfg);
 
-  // google 模式：URL 带 tlang 说明这条是 YouTube 服务端翻好的，直接透传（毫秒级，不用等模型）
-  if (cfg.subtitle_mode !== 'llm' && /[?&]tlang=/.test(reqUrl())) {
+  // google / menu 模式：URL 带 tlang 说明这条是 YouTube 服务端翻好的，直接透传（毫秒级，不用等模型）
+  if (tlangPath) {
     return handleServerTranslated(cfg, fmt, body);
   }
 
@@ -625,23 +649,87 @@ function handleTimedtext(cfg) {
  * google 模式 + 双语：把「原文」那条再拉一次（去掉 tlang），与译文按条对齐后合成两行。
  * 少一次模型往返，只是多一个几乎瞬时的字幕请求。
  */
-function handleServerTranslated(cfg, fmt, body) {
-  if (!cfg.bilingual) return $done({});          // 单语：YouTube 给的已经是目标语言
-  if (fmt !== 'json3') return $done({});         // 双语只处理 json3，避免破坏其它结构
+function parseSubtitleBody(fmt, body) {
+  if (!fmt) return null;
+  if (fmt === 'json3') {
+    var root = null;
+    try { root = JSON.parse(body); } catch (e) { return null; }
+    return collectJson3(root);
+  }
+  if (fmt === 'vtt') return collectVtt(body);
+  return collectXml(body, fmt);
+}
 
-  var root;
-  try { root = JSON.parse(body); } catch (e) { return $done({}); }
-  var zh = collectJson3(root);
-  if (!zh.texts.length) return $done({});
+// 客户端自己也会带 tlang：两条 tlang 叠在一起时 YouTube 会直接报错，这里收拾干净
+function dedupeTlang(url) {
+  var hits = url.match(/[?&]tlang=[^&]*/g) || [];
+  if (hits.length < 2) return url;
+  var first = hits[0].replace(/^[?&]/, '');
+  var cleaned = url.replace(/[?&]tlang=[^&]*/g, '').replace(/\?&/, '?').replace(/\?$/, '');
+  return setQueryParam(cleaned, 'tlang', first.split('=')[1] || '');
+}
 
-  var origUrl = stripQueryParam(reqUrl(), 'tlang');
+function refetchSubtitle(urls, fmt, onGive) {
+  var i = 0;
+  function next() {
+    if (i >= urls.length) return onGive(null, null, null);
+    var u = urls[i++];
+    try {
+      $httpClient.get({ url: u, headers: {} }, function (err, resp, data) {
+        if (!err && data) {
+          var parsed = parseSubtitleBody(fmt, String(data));
+          if (parsed && parsed.texts.length) return onGive(String(data), parsed, u);
+        }
+        next();
+      });
+    } catch (e) {
+      next();
+    }
+  }
+  next();
+}
+
+/*
+ * 目标语言那条拿不到内容时的补救顺序：
+ *   ① 两条 tlang 打架 → 去重整成一条再拉
+ *   ② 该语言确实没有 → 剥掉 tlang 拉原文
+ * 宁可显示原文，也不让客户端弹「字幕加载出错」。
+ */
+function salvageSubtitle(cfg, fmt, url) {
+  var candidates = [];
+  var fixed = dedupeTlang(url);
+  if (fixed !== url) candidates.push(fixed);
+  var orig = stripQueryParam(url, 'tlang');
+  if (orig !== url) candidates.push(orig);
+  if (!candidates.length) return $done({});
+
+  refetchSubtitle(candidates, fmt, function (data, parsed, usedUrl) {
+    if (!data) {
+      notifyThrottled('字幕取不到内容',
+        '目标语言和原文都没拉到',
+        '可把「字幕方式」换成 menu 或 llm', 600000);
+      return $done({});
+    }
+    var stillTranslated = usedUrl && /[?&]tlang=/.test(usedUrl);
+    if (cfg.bilingual && stillTranslated && fmt === 'json3') {
+      return mergeBilingual(cfg, parsed, usedUrl);
+    }
+    if (stillTranslated) return $done({ body: data });   // 去重后拿到了译文，别提示回退
+    notifyThrottled('已回退原文字幕',
+      '这个视频这一条翻不出目标语言',
+      '插件会自动退回原文，避免「字幕加载出错」', 1800000);
+    return $done({ body: data });
+  });
+}
+
+function mergeBilingual(cfg, zh, origUrl) {
   try {
-    $httpClient.get({ url: origUrl, headers: {} }, function (err, resp, data) {
+    $httpClient.get({ url: stripQueryParam(origUrl, 'tlang'), headers: {} }, function (err, resp, data) {
       if (err || !data) return $done({});
       var srcRoot;
       try { srcRoot = JSON.parse(data); } catch (e) { return $done({}); }
       var src = collectJson3(srcRoot);
-      if (src.texts.length !== zh.texts.length) return $done({});  // 对不齐就只留译文
+      if (src.texts.length !== zh.texts.length) return $done({});
       var merged = [];
       for (var i = 0; i < zh.texts.length; i++) {
         var a = src.texts[i];
@@ -653,6 +741,18 @@ function handleServerTranslated(cfg, fmt, body) {
   } catch (e) {
     return $done({});
   }
+}
+
+function handleServerTranslated(cfg, fmt, body) {
+  var url = reqUrl();
+  var status = $response && $response.status ? parseInt($response.status, 10) : 200;
+  var parsed = parseSubtitleBody(fmt, body);
+  var hasCues = !!(parsed && parsed.texts.length);
+
+  if (status >= 400 || !hasCues) return salvageSubtitle(cfg, fmt, url);
+  if (!cfg.bilingual) return $done({});          // 单语：YouTube 给的已经是目标语言
+  if (fmt !== 'json3') return $done({});         // 双语只处理 json3，避免破坏其它结构
+  return mergeBilingual(cfg, parsed, url);
 }
 
 /* ================================ 4. get_transcript 处理 ================================ */
@@ -859,7 +959,7 @@ function translateAll(texts, cfg, videoId, finish) {
     var input = [];
     for (var q = 0; q < chunk.length; q++) input.push(texts[chunk[q]]);
     inflight++;
-    callProvider(input, cfg, function (err, out) {
+    callProviderWithRetry(input, cfg, function (err, out) {
       inflight--;
       if (!err && out && out.length === input.length) {
         for (var w = 0; w < chunk.length; w++) {
@@ -892,6 +992,44 @@ function translateAll(texts, cfg, videoId, finish) {
   }
 
   pump();
+}
+
+function isTransientError(msg) {
+  var m = String(msg || '');
+  if (/HTTP (408|429|500|502|503|504|529)/.test(m)) return true;
+  return /high demand|overloaded|temporar|unavailable|timeout|timed out|ETIMEDOUT|ECONNRESET|socket|rate limit|quota|capacity/i.test(m);
+}
+
+// 503「high demand」这类是上游临时性错误：指数退避重试，gemini 再顺手换个更稳的模型
+var GEMINI_FALLBACK_MODEL = 'gemini-2.5-flash';
+
+function callProviderWithRetry(texts, cfg, cb) {
+  var tries = toInt(cfg.retry_times, 2, 0, 5);
+  var attempt = 0;
+  var used = cfg;
+  var switched = false;
+
+  function go() {
+    callProvider(texts, used, function (err, out) {
+      if (!err) return cb(null, out);
+      var msg = String(err);
+      if (attempt >= tries || !isTransientError(msg)) return cb(msg);
+      attempt++;
+      var p = String(used.provider || '').toLowerCase();
+      if (!switched && (p === 'gemini' || p === 'googleai' || p === 'interactions')) {
+        var fallback = String(cfg.fallback_model || GEMINI_FALLBACK_MODEL).trim();
+        if (fallback && fallback !== String(used.api_model || '')) {
+          var c2 = JSON.parse(JSON.stringify(cfg));
+          c2.api_model = fallback;
+          used = c2;
+          switched = true;
+          if (cfg.debug) console.log('[YT字幕] ' + msg + ' → 改用 ' + fallback + ' 重试');
+        }
+      }
+      setTimeout(go, 500 * attempt);
+    });
+  }
+  go();
 }
 
 function callProvider(texts, cfg, cb) {

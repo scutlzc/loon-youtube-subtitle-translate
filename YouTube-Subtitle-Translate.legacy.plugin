@@ -31,6 +31,7 @@ chars_per_request = input,"4000",tag=每次字符,desc=一次请求的字符预�
 max_cues = input,"500",tag=单次上限,desc=超过这个条数的字幕保留原文不翻译
 timeout_ms = input,"20000",tag=总预算毫秒,desc=整体翻译时限；超时先返回已翻部分加原文 别让客户端干等
 concurrency = input,"3",tag=并发请求,desc=同时发几个翻译请求；3 比较稳 越高首屏越快也越容易撞限速
+retry_times = input,"2",tag=失败重试次数,desc=遇到 429 503 high demand 这类临时错误时重试几次；gemini 后端重试会自动换到 fallback 模型 更稳
 force_json3 = switch,true,tag=强制 json3,desc=改写 player 响应里的字幕地址保证格式可解析
 cache = switch,true,tag=译文缓存,desc=同一视频重看不重复调用 API 省钱
 prefetch = switch,true,tag=预取预热,desc=在 player 阶段先把字幕翻译好写进缓存；打开后开启字幕几乎秒出
@@ -42,13 +43,13 @@ custom_item_path = input,"",tag=条目取值路径,desc=仅 custom 后端使用�
 
 [Script]
 # 1) timedtext：字幕文本本体，支持 json3 / srv3 / vtt / ttml
-http-response ^https?:\/\/(www|m|music)\.youtube\.com\/api\/timedtext script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{subtitle_mode},{bilingual},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{concurrency},{force_json3},{cache},{prefetch},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·翻译字幕
+http-response ^https?:\/\/(www|m|music)\.youtube\.com\/api\/timedtext script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{subtitle_mode},{bilingual},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{concurrency},{retry_times},{force_json3},{cache},{prefetch},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·翻译字幕
 
 # 2) get_transcript：新版转录面板接口（JSON）
-http-response ^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/get_transcript script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{subtitle_mode},{bilingual},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{concurrency},{force_json3},{cache},{prefetch},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·转录面板
+http-response ^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/get_transcript script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{subtitle_mode},{bilingual},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{concurrency},{retry_times},{force_json3},{cache},{prefetch},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·转录面板
 
 # 3) player：把 captionTracks[].baseUrl 的 fmt 统一改成 json3，保证字幕可解析
-http-response ^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/player script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{subtitle_mode},{bilingual},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{concurrency},{force_json3},{cache},{prefetch},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·强制json3
+http-response ^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/player script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{subtitle_mode},{bilingual},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{concurrency},{retry_times},{force_json3},{cache},{prefetch},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·强制json3
 
 [MITM]
 hostname = www.youtube.com, m.youtube.com, youtubei.googleapis.com, music.youtube.com
