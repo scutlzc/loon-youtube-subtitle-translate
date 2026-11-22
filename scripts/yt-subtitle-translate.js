@@ -1037,9 +1037,7 @@ function translateAll(texts, cfg, videoId, finish) {
   // 而不是「模型慢」。这条通知把两种情况分开，省得在参数上瞎试。
   var probeTimer = setTimeout(function () {
     if (settled || answered > 0) return;
-    notifyThrottled('接口 3 秒无响应 · ' + endpointHint(cfg),
-      'v' + PLUGIN_VERSION + ' · ' + cfg.provider + ' · ' + cfg.api_model,
-      '先确认这台设备能连上该域名：关掉本插件单独访问一次接口，或换 Wi-Fi / 蜂窝对比', 30000);
+    splitNetworkProbe(cfg);
   }, Math.min(3000, Math.max(1000, cfg.soft_deadline_ms - 1000)));
 
   function dispatch(chunk) {
@@ -1083,6 +1081,42 @@ function translateAll(texts, cfg, videoId, finish) {
   }
 
   pump();
+}
+
+/*
+ * POST 3 秒没回来时，再用一次极简 GET 探同一个域名：
+ *   GET 能通、POST 不通 → 链路是好的，问题在「代理策略 / IPv6 半通 / MTU」这类会挂住的地方
+ *   GET 也挂住           → 根本走不出去（规则 REJECT、节点挂了、DNS 解析失败）
+ * 这两句话能把排查范围砍掉一半，省得在模型名和条数上瞎试。
+ */
+function splitNetworkProbe(cfg) {
+  var host = endpointHint(cfg);
+  var base = 'https://' + host + '/';
+  var fired = false;
+  var timer = setTimeout(function () {
+    if (fired) return;
+    fired = true;
+    notifyThrottled('整条链路不通 · ' + host,
+      'v' + PLUGIN_VERSION + ' · GET 也挂住',
+      '规则把该域名 REJECT 了，或节点/DNS 有问题：在 Loon 里给该域名加一条走代理的规则再试', 60000);
+  }, 2500);
+  try {
+    $httpClient.get({ url: base, headers: { 'User-Agent': 'Loon/1.0' } }, function (err, resp, data) {
+      if (fired) return;
+      fired = true;
+      clearTimeout(timer);
+      if (err) {
+        return notifyThrottled('整条链路不通 · ' + host,
+          'v' + PLUGIN_VERSION + ' · GET 报错 ' + String(err).slice(0, 60),
+          '规则或节点问题：给该域名加一条走代理的规则', 60000);
+      }
+      notifyThrottled('GET 能通、POST 挂住 · ' + host,
+        'v' + PLUGIN_VERSION + ' · 状态 ' + (resp && resp.status),
+        '典型是 IPv6 半通或 MTU 问题：Loon 设置里关掉 IPv6，或给该域名指定走代理节点', 60000);
+    });
+  } catch (e) {
+    if (!fired) { fired = true; clearTimeout(timer); }
+  }
 }
 
 function endpointHint(cfg) {

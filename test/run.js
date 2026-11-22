@@ -785,7 +785,9 @@ test('3 秒无响应：区分「请求没通」与「模型慢」', function () 
     translate: function (o, cb) { /* 永不回调，模拟挂死 */ }
   });
   return sleep(120).then(function () {
-    const hit = r.notes.filter(function (n) { return String(n[0]).indexOf('3 秒无响应') >= 0; });
+    const hit = r.notes.filter(function (n) {
+      return /无响应|挂住|不通/.test(String(n[0]));
+    });
     assert.ok(hit.length >= 1, '应弹无响应通知，实际 ' + JSON.stringify(r.notes));
     // 软截止到了仍要交回结果（原文），不能让客户端干等
     assert.strictEqual(r.done.length, 1, '软截止应兜底返回');
