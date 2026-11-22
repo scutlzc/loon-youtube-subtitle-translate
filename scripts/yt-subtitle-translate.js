@@ -217,7 +217,7 @@ function resolveConfig() {
   cfg.concurrency = toInt(cfg.concurrency, 3, 1, 6);
 
   cfg.subtitle_mode = String(cfg.subtitle_mode || 'google').toLowerCase().trim();
-  if (cfg.subtitle_mode !== 'llm') cfg.subtitle_mode = 'google';
+  if (cfg.subtitle_mode !== 'llm' && cfg.subtitle_mode !== 'menu') cfg.subtitle_mode = 'google';
   cfg.bilingual = toBool(cfg.bilingual, false);
 
   cfg.force_json3 = toBool(cfg.force_json3, true);
@@ -276,6 +276,67 @@ function setQueryParam(u, key, val) {
   return base + '?' + out.join('&');
 }
 
+/* ================================ 自动翻译菜单解锁 ================================
+ * 客户端「字幕 → 自动翻译」里能选哪些语言，完全由 player 响应里的
+ * playerCaptionsTracklistRenderer.translationLanguages 决定，通常只给几十种。
+ * menu 模式把这张表换成全量，并把轨道的 isTranslatable 强制打上 true，
+ * 之后你在播放器里选什么语言，客户端就带着 tlang=<你选的语言> 去请求字幕。
+ */
+
+var TLANG_RAW = 'af|Afrikaans,sq|Albanian,am|Amharic,ar|Arabic,hy|Armenian,as|Assamese,ay|Aymara,az|Azerbaijani,eu|Basque,be|Belarusian,bn|Bengali,bho|Bhojpuri,bs|Bosnian,bg|Bulgarian,my|Burmese,ca|Catalan,ceb|Cebuano,zh-Hans|Chinese (Simplified),zh-Hant|Chinese (Traditional),co|Corsican,hr|Croatian,cs|Czech,da|Danish,dv|Dhivehi,doi|Dogri,nl|Dutch,en|English,eo|Esperanto,et|Estonian,ee|Ewe,fil|Filipino,fi|Finnish,fr|French,fy|Frisian,gl|Galician,ka|Georgian,de|German,el|Greek,gn|Guarani,gu|Gujarati,ht|Haitian Creole,ha|Hausa,haw|Hawaiian,he|Hebrew,hi|Hindi,hmn|Hmong,hu|Hungarian,is|Icelandic,ig|Igbo,id|Indonesian,ga|Irish,it|Italian,ja|Japanese,jv|Javanese,kn|Kannada,kk|Kazakh,km|Khmer,rw|Kinyarwanda,gom|Konkani,ko|Korean,kri|Krio,ku|Kurdish (Kurmanji),ckb|Kurdish (Sorani),ky|Kyrgyz,lo|Lao,la|Latin,lv|Latvian,ln|Lingala,lt|Lithuanian,lg|Luganda,lb|Luxembourgish,mk|Macedonian,mai|Maithili,mg|Malagasy,ms|Malay,ml|Malayalam,mt|Maltese,mi|Maori,mr|Marathi,mn|Mongolian,ne|Nepali,no|Norwegian,ny|Nyanja,or|Odia,om|Oromo,ps|Pashto,fa|Persian,pl|Polish,pt|Portuguese,pa|Punjabi,qu|Quechua,ro|Romanian,ru|Russian,sm|Samoan,sa|Sanskrit,gd|Scots Gaelic,nso|Sepedi,sr|Serbian,st|Sesotho,sn|Shona,sd|Sindhi,si|Sinhala,sk|Slovak,sl|Slovenian,so|Somali,es|Spanish,su|Sundanese,sw|Swahili,sv|Swedish,tg|Tajik,ta|Tamil,tt|Tatar,te|Telugu,th|Thai,ti|Tigrinya,to|Tongan,ts|Tsonga,tr|Turkish,tk|Turkmen,uk|Ukrainian,ur|Urdu,ug|Uyghur,uz|Uzbek,vi|Vietnamese,cy|Welsh,xh|Xhosa,yi|Yiddish,yo|Yoruba,zu|Zulu';
+
+function translationLanguageList() {
+  var parts = TLANG_RAW.split(',');
+  var out = [];
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i].split('|');
+    // 新版客户端读 runs，老版读 simpleText，两个都给
+    out.push({ languageCode: p[0], languageName: { simpleText: p[1], runs: [{ text: p[1] }] } });
+  }
+  return out;
+}
+
+// 把 body 里 "key":[ ... ] 这个数组整段替换掉（自写括号配对，能处理嵌套）
+function spliceJsonArray(body, key, arrText) {
+  var tag = '"' + key + '":';
+  var idx = body.indexOf(tag);
+  if (idx < 0) return null;
+  var start = body.indexOf('[', idx + tag.length);
+  if (start < 0) return null;
+  var depth = 0;
+  var inStr = false;
+  var esc = false;
+  for (var i = start; i < body.length; i++) {
+    var ch = body.charAt(i);
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) return body.slice(0, start) + arrText + body.slice(i + 1);
+    }
+  }
+  return null;
+}
+
+function unlockTranslationMenu(body) {
+  var out = String(body).replace(/"isTranslatable":false/g, '"isTranslatable":true');
+  var arr = JSON.stringify(translationLanguageList());
+  var spliced = spliceJsonArray(out, 'translationLanguages', arr);
+  if (spliced === null) {
+    // 没有这个字段：塞到 captionTracks 前面
+    var at = out.indexOf('"captionTracks":');
+    if (at < 0) return out;
+    spliced = out.slice(0, at) + '"translationLanguages":' + arr + ',' + out.slice(at);
+  }
+  return spliced;
+}
+
 // YouTube 的 tlang 用「语言-Script」写法：简体是 zh-Hans，繁体是 zh-Hant
 function tlangOf(lang) {
   var s = String(lang || '').trim();
@@ -306,6 +367,13 @@ function handlePlayer(cfg) {
   if (body.indexOf('timedtext') < 0) return $done({});
 
   var changed = false;
+  if (cfg.subtitle_mode === 'menu') {
+    var unlocked = unlockTranslationMenu(body);
+    if (unlocked !== body) {
+      body = unlocked;
+      changed = true;
+    }
+  }
   var wantTlang = cfg.subtitle_mode === 'google' ? tlangOf(cfg.target_lang) : '';
   var tlangAdded = 0;
   var sawTranslatable = body.indexOf('"isTranslatable":true') >= 0;
@@ -515,7 +583,7 @@ function handleTimedtext(cfg) {
   if (!fmt) return hintUnsupported(cfg);
 
   // google 模式：URL 带 tlang 说明这条是 YouTube 服务端翻好的，直接透传（毫秒级，不用等模型）
-  if (cfg.subtitle_mode === 'google' && /[?&]tlang=/.test(reqUrl())) {
+  if (cfg.subtitle_mode !== 'llm' && /[?&]tlang=/.test(reqUrl())) {
     return handleServerTranslated(cfg, fmt, body);
   }
 

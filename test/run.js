@@ -59,6 +59,54 @@ function run(opts) {
 
 const results = [];
 
+// ---- menu 模式：解锁播放器「自动翻译」全语言 ----
+test('menu 模式：翻译语言表换成全量，isTranslatable 强制 true，且不注入 tlang', function () {
+  const body = '{"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":['
+    + '{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc\\u0026lang=en\\u0026fmt=pb",'
+    + '"name":{"simpleText":"English"},"isTranslatable":false}],'
+    + '"translationLanguages":[{"languageCode":"zh-Hans","languageName":{"runs":[{"text":"Chinese (Simplified)"}]}}]}}}';
+  const r = run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: body,
+    argument: { subtitle_mode: 'menu', prefetch: false }
+  });
+  const out = r.done[0].body;
+  assert.ok(out.indexOf('"isTranslatable":true') >= 0, '应把 isTranslatable 打开');
+  assert.ok(out.indexOf('tlang=') < 0, 'menu 模式不应注入 tlang');
+  const parsed = JSON.parse(out);
+  const langs = parsed.captions.playerCaptionsTracklistRenderer.translationLanguages;
+  assert.ok(langs.length > 100, '应换成全语言表，实际 ' + langs.length);
+  const codes = langs.map(function (l) { return l.languageCode; });
+  ['ja', 'ko', 'fr', 'zh-Hans', 'zh-Hant'].forEach(function (c) {
+    assert.ok(codes.indexOf(c) >= 0, '缺少语言 ' + c);
+  });
+  assert.ok(out.indexOf('fmt=json3') >= 0, '仍然要改 fmt');
+});
+
+test('menu 模式：没有 translationLanguages 字段时自动插入', function () {
+  const body = '{"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":['
+    + '{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc\\u0026lang=en\\u0026fmt=pb","isTranslatable":true}]}}}';
+  const r = run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: body,
+    argument: { subtitle_mode: 'menu', prefetch: false }
+  });
+  const parsed = JSON.parse(r.done[0].body);
+  assert.ok(parsed.captions.playerCaptionsTracklistRenderer.translationLanguages.length > 100, '应插入语言表');
+});
+
+test('menu 模式：用户手选语言后 timedtext 带 tlang，直接透传', function () {
+  const zh = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: '你好' }] }] });
+  const r = run({
+    url: 'https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=json3&tlang=ja',
+    body: zh,
+    argument: { subtitle_mode: 'menu' }
+  });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(r.done[0])), {});
+  assert.strictEqual(r.calls.length, 0, '不该调用任何 API');
+});
+
+
 // ---- google 模式：让 YouTube 服务端翻好（tlang），脚本零延迟透传 ----
 test('google 模式：player 改写给可翻译轨道加 tlang=zh-Hans 且保留 fmt=json3', function () {
   const body = '{"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":'
