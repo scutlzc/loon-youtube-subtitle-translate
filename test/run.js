@@ -580,7 +580,7 @@ test('gemini 503：自动换到 fallback 模型重试', function () {
   return sleep(60).then(function () {
     assert.strictEqual(seen.length, 2, '应重试一次');
     assert.strictEqual(seen[0], 'gemini-3.7-flash');
-    assert.strictEqual(seen[1], 'gemini-2.5-flash', '兜底应换模型，实际 ' + seen[1]);
+    assert.strictEqual(seen[1], 'gemini-flash-lite-latest', '兜底应换模型，实际 ' + seen[1]);
     assert.ok(r.done[0].body.indexOf('译:Hi') >= 0);
   });
 });
@@ -648,6 +648,33 @@ test('llm 全部失败：通知里带主机与模型，并触发一次接口自�
     const titles = r.notes.map(function (x) { return x[0]; }).join(' | ');
     assert.ok(/字幕翻译失败/.test(titles), '应有失败通知：' + titles);
     assert.ok(/api\.deepseek\.com/.test(titles), '通知里应带主机：' + titles);
+  });
+});
+
+test('gemini 404 模型下线：继续沿模型链换到可用模型', function () {
+  const seen = [];
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: {
+      provider: 'gemini', api_base_url: '', api_model: 'gemini-2.5-flash',
+      subtitle_mode: 'llm', retry_times: 2, cache: false
+    },
+    translate: function (o, cb) {
+      const model = JSON.parse(o.body).model;
+      seen.push(model);
+      if (seen.length === 1) {
+        return cb(null, { status: 404 },
+          '{"error":{"message":"models/gemini-2.5-flash is no longer available to new users"}}');
+      }
+      if (seen.length === 2) return cb(null, { status: 503 }, '{"error":{"message":"high demand"}}');
+      cb(null, { status: 200 }, JSON.stringify({ output_text: JSON.stringify(['译:Hi']) }));
+    }
+  });
+  return sleep(80).then(function () {
+    assert.deepStrictEqual(seen, ['gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'],
+      '应依次换模型，实际 ' + JSON.stringify(seen));
+    assert.ok(r.done[0].body.indexOf('译:Hi') >= 0, '最终应拿到译文');
   });
 });
 

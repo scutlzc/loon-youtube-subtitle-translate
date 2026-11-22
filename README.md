@@ -150,7 +150,7 @@ Loon →「插件」→「YouTube 字幕翻译」→ 点进详情页，**参数�
 | `max_cues` | `500` | 单次字幕最多翻多少条，超出部分保留原文（防长视频烧钱） |
 | `timeout_ms` | `20000` | 脚本内部总预算，超时就把已翻好的先返回、其余保留原文。**别调很大**，见「为什么不是流式」 |
 | `concurrency` | `3` | 同时发几个翻译请求（1~6）。越高首屏越快，也越容易撞上游 RPM |
-| `retry_times` | `2` | 遇到 `429` / `503` / `high demand` / 超时这类临时错误时的重试次数。`gemini` 后端重试时会自动换到 `gemini-2.5-flash`（更稳），换模型后仍失败才真正报错 |
+| `retry_times` | `2` | 遇到 `429` / `503` / `high demand` / 超时这类临时错误时的重试次数。`gemini` 后端重试时会**沿模型链往下换**（`gemini-flash-lite-latest` → `gemini-3.5-flash-lite` → `gemini-3-flash`，改 `fallback_model` 可自定义逗号列表），`404 模型下线` 也走这条链；换完仍失败才真正报错 |
 | `force_json3` | `true` | 改写 player 里的 `baseUrl` 为 `json3`，**绝大多数情况必须开** |
 | `cache` | `true` | 按「视频 + 语言 + 后端 + 模型」缓存译文，重看不重复花钱 |
 | `prefetch` | `true` | 在 `player` 阶段就把字幕预取并翻译好写缓存，等你开字幕时几乎秒出 |
@@ -240,7 +240,8 @@ api_key      = AQ... 或 AIza...
 注意别把 `https://generativelanguage.googleapis.com/v1beta/interactions` 填给 `openai` 后端：那是格式完全不同的原生接口，
 返回里没有 `choices[0].message.content`，填错会一直拿不到译文。
 
-**模型怎么选**：`gemini-3.7-flash`（$0.75/$3.75）质量与成本平衡最好；`gemini-2.5-flash`（$0.15/$0.60）最便宜；
+**模型怎么选**：`gemini-3-flash`（$0.50/$3.00）质量与成本平衡最好；`gemini-flash-lite-latest`（别名，永远指向当前 Flash-Lite 档）最便宜也最不容易 404。
+⚠️ `gemini-2.5-flash` 已下线——**2026-11 起新 key 直接 404「no longer available」**，12 月 1 日起请求会自动转去 `gemini-3.5-flash-lite`。别再用它。
 `gemini-4-hydrogen` 是给编码/Agent 场景的旗舰，默认思考等级 high，翻字幕**又慢又贵**，不建议。
 
 **key 从哪来**：<https://aistudio.google.com/app/apikey>，无需信用卡，免费层只有 Flash 档模型（RPM 约 10~15）。
@@ -330,7 +331,7 @@ provider = google
 | --- | --- | --- |
 | 默认（中文最自然、国内直连） | DeepSeek `deepseek-flash` | 口语化好、JSON 守规矩、不用额外挂代理；插件默认值就是它 |
 | 更高质量的日/韩翻中、俚语多 | Gemini `gemini-3.7-flash` 或 `gemini-3-flash` | 多语种理解强，Flash 档延迟仍低 |
-| 极低成本跑长视频 | Gemini `gemini-2.5-flash`（$0.15 / $0.60） | 便宜到几乎无感，质量对字幕足够 |
+| 极低成本跑长视频 | Gemini `gemini-flash-lite-latest`（别名，指向当前 Lite 档） | 便宜到几乎无感，质量对字幕足够，且不会因模型下线变 404 |
 | 已有 OpenAI key | `gpt-5-mini` / `gpt-5-nano` | 稳定，nano 更快更便宜 |
 | 零成本试水 | `provider=google` 免费接口 | 不用 key，但会限流，长视频可能只翻一半 |
 
@@ -392,9 +393,15 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 
 这是**上游模型服务过载**，不是插件的问题。三种解法，从省事到彻底：
 
-1. 什么都不做——插件默认 `retry_times=2`，会自动重试，`gemini` 后端还会自动换到 `gemini-2.5-flash` 兜底；
-2. 把 `模型名` 换成容量更大的档：`gemini-3.7-flash` → `gemini-2.5-flash`（便宜又稳），或换 `deepseek-flash`；
+1. 什么都不做——插件默认 `retry_times=2`，会自动重试；`gemini` 后端还会沿模型链换（`gemini-flash-lite-latest` → `gemini-3.5-flash-lite` → `gemini-3-flash`）兜底；
+2. 把 `模型名` 换成容量更大的档：`gemini-3.7-flash` → `gemini-3-flash`，或干脆换 `deepseek-flash`（最省心，不受 Google 下线节奏影响）；
 3. 干脆把 `字幕方式` 改成 `google` 或 `menu`——这条路完全不经过模型，不可能 503。
+
+### 弹「404 / model is no longer available」
+
+模型被 Google 下线了（`gemini-2.5-flash` 从 2026-11 起对新 key 就是 404）。插件会自动沿模型链换到下一个可用模型，
+但**你手填的 `模型名` 值得改成不会下线的**：`gemini-flash-lite-latest`（别名）或 `gemini-3-flash`；
+也可以直接换 `deepseek-flash`，这条路不受 Google 下线节奏影响。
 
 ### 通知「YT字幕 · 已翻译 0/N 条」，字幕没动
 
@@ -490,7 +497,7 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 | --- | --- | --- |
 | `google` 免费接口 | 0 | 0（会限流） |
 | DeepSeek `deepseek-flash` | 约 ¥3 / ¥6 | 约 ¥0.03 |
-| Gemini `gemini-2.5-flash` | $0.15 / $0.60 | 约 $0.002 |
+| Gemini `gemini-flash-lite-latest` | 与当前 Lite 档同价（约 $0.15 / $0.60） | 约 $0.002 |
 | Gemini `gemini-3.7-flash` | $0.75 / $3.75 | 约 $0.014 |
 | OpenAI `gpt-5-mini` | $0.25 / $2.00 | 约 $0.007 |
 

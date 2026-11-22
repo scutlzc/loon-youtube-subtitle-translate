@@ -42,7 +42,7 @@ var DEFAULTS = {
 
   // ---- 重试 ----
   retry_times: 2,
-  fallback_model: 'gemini-2.5-flash',
+  fallback_model: 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3-flash',
 
   // ---- 批量 / 限流 ----
   // 字幕请求是客户端阻塞等待的：片要少、并发要高、总预算要短，否则客户端先超时 → 「字幕加载失败」
@@ -224,7 +224,7 @@ function resolveConfig() {
   if (cfg.subtitle_mode !== 'llm' && cfg.subtitle_mode !== 'menu') cfg.subtitle_mode = 'google';
   cfg.bilingual = toBool(cfg.bilingual, false);
   cfg.retry_times = toInt(cfg.retry_times, 2, 0, 5);
-  cfg.fallback_model = String(cfg.fallback_model || 'gemini-2.5-flash').trim();
+  cfg.fallback_model = String(cfg.fallback_model || 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3-flash').trim();
 
   cfg.force_json3 = toBool(cfg.force_json3, true);
   cfg.cache = toBool(cfg.cache, true);
@@ -1063,31 +1063,61 @@ function isTransientError(msg) {
   return /high demand|overloaded|temporar|unavailable|timeout|timed out|ETIMEDOUT|ECONNRESET|socket|rate limit|quota|capacity/i.test(m);
 }
 
-// 503「high demand」这类是上游临时性错误：指数退避重试，gemini 再顺手换个更稳的模型
-var GEMINI_FALLBACK_MODEL = 'gemini-2.5-flash';
+/*
+ * 上游会临时性报错（503 high demand / 429 / 超时），模型本身也会被 Google 下线
+ * （gemini-2.5-flash 在 2026-11 起对新 key 直接 404「no longer available」）。
+ * 所以重试不是「同一个模型再来一次」，而是沿一条模型链往下换：
+ *   api_model → fallback_model 列表（逗号分隔，按顺序试）
+ * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3-flash
+ */
+var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3-flash';
+
+function isGeminiLike(provider) {
+  var p = String(provider || '').toLowerCase();
+  return p === 'gemini' || p === 'googleai' || p === 'interactions';
+}
+
+function isModelUnavailable(msg) {
+  return /HTTP 404|not found|no longer available|not available to new users|unsupported model|does not exist|invalid model|已下线|不存在|model_not_found/i
+    .test(String(msg || ''));
+}
+
+function modelChain(cfg) {
+  var chain = [];
+  function add(v) {
+    v = String(v == null ? '' : v).trim();
+    if (v && chain.indexOf(v) < 0) chain.push(v);
+  }
+  add(cfg.api_model);
+  String(cfg.fallback_model || '').split(',').forEach(add);
+  return chain;
+}
 
 function callProviderWithRetry(texts, cfg, cb) {
+  var chain = isGeminiLike(cfg.provider) ? modelChain(cfg) : [String(cfg.api_model || '').trim()];
+  var canRotate = chain.length > 1;
   var tries = toInt(cfg.retry_times, 2, 0, 5);
+  if (canRotate) tries = Math.max(tries, chain.length - 1);
   var attempt = 0;
-  var used = cfg;
-  var switched = false;
+  var mi = 0;
 
   function go() {
+    var used = cfg;
+    if (mi > 0) {
+      used = JSON.parse(JSON.stringify(cfg));
+      used.api_model = chain[mi];
+    }
     callProvider(texts, used, function (err, out) {
       if (!err) return cb(null, out);
       var msg = String(err);
-      if (attempt >= tries || !isTransientError(msg)) return cb(msg);
+      var retryable = isTransientError(msg) || isModelUnavailable(msg);
+      if (attempt >= tries || !retryable) return cb(msg);
       attempt++;
-      var p = String(used.provider || '').toLowerCase();
-      if (!switched && (p === 'gemini' || p === 'googleai' || p === 'interactions')) {
-        var fallback = String(cfg.fallback_model || GEMINI_FALLBACK_MODEL).trim();
-        if (fallback && fallback !== String(used.api_model || '')) {
-          var c2 = JSON.parse(JSON.stringify(cfg));
-          c2.api_model = fallback;
-          used = c2;
-          switched = true;
-          if (cfg.debug) console.log('[YT字幕] ' + msg + ' → 改用 ' + fallback + ' 重试');
-        }
+      if (canRotate && mi < chain.length - 1) {
+        mi++;
+        if (cfg.debug) console.log('[YT字幕] ' + msg.slice(0, 60) + ' → 换模型 ' + chain[mi] + ' 重试');
+      } else if (cfg.debug) {
+        console.log('[YT字幕] ' + msg.slice(0, 60) + ' → 第 ' + attempt + ' 次重试');
       }
       setTimeout(go, 500 * attempt);
     });
@@ -1248,7 +1278,7 @@ function alignToInput(arr, texts, cfg) {
 function callGeminiNative(texts, cfg, cb) {
   var url = cfg.api_base_url && /googleapis\.com/.test(cfg.api_base_url) ? cfg.api_base_url : GEMINI_DEFAULT_URL;
   var input = buildSystemPrompt(cfg) + '\n\n共 ' + texts.length + ' 条：\n' + JSON.stringify(texts);
-  var payload = { model: cfg.api_model || 'gemini-2.5-flash', input: input };
+  var payload = { model: cfg.api_model || 'gemini-flash-lite-latest', input: input };
   var headers = { 'Content-Type': 'application/json' };
   if (cfg.api_key) headers['x-goog-api-key'] = cfg.api_key;
 
