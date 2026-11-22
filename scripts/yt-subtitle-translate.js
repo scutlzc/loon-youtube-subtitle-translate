@@ -26,23 +26,26 @@
 var DEFAULTS = {
   // ---- 翻译后端 ----
   provider: 'openai',
-  api_base_url: 'https://api.openai.com/v1/chat/completions',
+  api_base_url: 'https://api.deepseek.com/chat/completions',
   api_key: '',
-  api_model: 'gpt-4o-mini',
+  api_model: 'deepseek-flash',
 
   // ---- 语言 ----
   target_lang: 'zh-CN',
   source_lang: 'auto',
 
   // ---- 批量 / 限流 ----
-  cues_per_request: 40,
-  chars_per_request: 2500,
+  // 字幕请求是客户端阻塞等待的：片要少、并发要高、总预算要短，否则客户端先超时 → 「字幕加载失败」
+  cues_per_request: 80,
+  chars_per_request: 4000,
   max_cues: 500,
-  timeout_ms: 95000,
+  timeout_ms: 20000,
+  concurrency: 3,
 
   // ---- 行为开关 ----
   force_json3: true,
   cache: true,
+  prefetch: true,
   debug: false,
 
   // ---- 高级 ----
@@ -201,13 +204,15 @@ function resolveConfig() {
   cfg.custom_response_path = String(cfg.custom_response_path || 'translations').trim();
   cfg.custom_item_path = String(cfg.custom_item_path || '').trim();
 
-  cfg.cues_per_request = toInt(cfg.cues_per_request, 40, 1, 200);
-  cfg.chars_per_request = toInt(cfg.chars_per_request, 2500, 200, 20000);
+  cfg.cues_per_request = toInt(cfg.cues_per_request, 80, 1, 200);
+  cfg.chars_per_request = toInt(cfg.chars_per_request, 4000, 200, 20000);
   cfg.max_cues = toInt(cfg.max_cues, 500, 1, 5000);
-  cfg.timeout_ms = toInt(cfg.timeout_ms, 95000, 3000, 110000);
+  cfg.timeout_ms = toInt(cfg.timeout_ms, 20000, 2000, 110000);
+  cfg.concurrency = toInt(cfg.concurrency, 3, 1, 6);
 
   cfg.force_json3 = toBool(cfg.force_json3, true);
   cfg.cache = toBool(cfg.cache, true);
+  cfg.prefetch = toBool(cfg.prefetch, true);
   cfg.debug = toBool(cfg.debug, false);
 
   return cfg;
@@ -281,7 +286,43 @@ function handlePlayer(cfg) {
   });
 
   if (!changed) return $done({});
-  return doneBody(cfg, out, 'player');
+  doneBody(cfg, out, 'player');
+  prefetchTracks(cfg, out);
+  return;
+}
+
+/*
+ * 预取预热：客户端拿到 player 之后才会（在你开字幕时）请求 timedtext，
+ * 中间有几秒空档。这里先用同一份 cacheKey 把译文算好写进缓存，
+ * 等真正的字幕请求到达就能毫秒级返回——避免客户端等太久直接报「字幕加载失败」。
+ */
+function prefetchTracks(cfg, body) {
+  if (!cfg.prefetch || !cfg.api_key) return;
+  var urls = [];
+  var re = /"baseUrl":"((?:[^"\\]|\\.)*)"/g;
+  var m;
+  while ((m = re.exec(body)) !== null) {
+    if (m[1].indexOf('timedtext') < 0) continue;
+    var u = m[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+    if (urls.indexOf(u) < 0) urls.push(u);
+    if (urls.length >= 2) break;
+  }
+  for (var i = 0; i < urls.length; i++) prefetchOne(cfg, urls[i]);
+}
+
+function prefetchOne(cfg, url) {
+  try {
+    $httpClient.get({ url: url, headers: {} }, function (err, resp, data) {
+      if (err || !data) return;
+      var root;
+      try { root = JSON.parse(data); } catch (e) { return; }
+      if (!root || !root.events) return;
+      var parsed = collectJson3(root);
+      if (!parsed.texts.length) return;
+      if (cfg.debug) console.log('[YT字幕] 预热 ' + parsed.texts.length + ' 条');
+      translateAll(parsed.texts, cfg, videoIdFromUrl(url), function () { /* 只写缓存 */ });
+    });
+  } catch (e) { /* 预热失败不影响播放 */ }
 }
 
 /* ================================ 2. 字幕格式解析 ================================ */
@@ -640,23 +681,23 @@ function translateAll(texts, cfg, videoId, finish) {
 
   var ci = 0;
   var failures = 0;
+  var inflight = 0;
+  var settled = false;
+  var conc = Math.max(1, Math.min(6, cfg.concurrency || 1));
 
-  function step() {
-    if (ci >= chunks.length) {
-      saveCache(ck, cacheMap);
-      return finishDebug();
-    }
-    if (nowMs() > deadline) {
-      if (cfg.debug) console.log('[YT字幕] 超时，剩余 ' + (chunks.length - ci) + ' 片未翻译');
-      saveCache(ck, cacheMap);
-      return finishDebug();
-    }
+  function finishOnce() {
+    if (settled) return;
+    settled = true;
+    saveCache(ck, cacheMap);
+    return finishDebug();
+  }
 
-    var chunk = chunks[ci++];
+  function dispatch(chunk) {
     var input = [];
     for (var q = 0; q < chunk.length; q++) input.push(texts[chunk[q]]);
-
+    inflight++;
     callProvider(input, cfg, function (err, out) {
+      inflight--;
       if (!err && out && out.length === input.length) {
         for (var w = 0; w < chunk.length; w++) {
           var val = out[w];
@@ -673,11 +714,21 @@ function translateAll(texts, cfg, videoId, finish) {
             180000);
         }
       }
-      step();
+      pump();
     });
   }
 
-  step();
+  function pump() {
+    if (settled) return;
+    if (nowMs() > deadline) {
+      if (cfg.debug) console.log('[YT字幕] 超时，剩余 ' + (chunks.length - ci) + ' 片未翻译');
+      return finishOnce(); // 先回已翻好的部分，剩下的保留原文——别让客户端干等
+    }
+    while (inflight < conc && ci < chunks.length) dispatch(chunks[ci++]);
+    if (inflight === 0 && ci >= chunks.length) return finishOnce();
+  }
+
+  pump();
 }
 
 function callProvider(texts, cfg, cb) {

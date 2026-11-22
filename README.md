@@ -136,18 +136,20 @@ Loon →「插件」→「YouTube 字幕翻译」→ 点进详情页，**参数�
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
-| `provider` | `openai` | `openai` / `deepl` / `google` / `custom` |
+| `provider` | `openai` | `openai` / `deepl` / `gemini` / `google` / `custom` |
 | `api_base_url` | DeepSeek | 请求地址，默认 `https://api.deepseek.com/chat/completions`，见下方各家示例 |
 | `api_key` | 空 | 翻译服务的 key；`google` 不需要 |
 | `api_model` | `deepseek-flash` | 模型名，见「换哪个模型」；`deepl` / `google` 忽略 |
 | `target_lang` | `zh-CN` | 目标语言，`zh-CN` / `zh-TW` / `ja` / `en` … |
 | `source_lang` | `auto` | 源语言；`auto` 交给模型判断 |
-| `cues_per_request` | `40` | 一次请求最多翻多少条字幕 |
-| `chars_per_request` | `2500` | 一次请求的字符预算上限（到量就切下一片） |
+| `cues_per_request` | `80` | 一次请求最多翻多少条字幕。别调太小：字幕请求是**客户端阻塞等待**的，片多就慢 |
+| `chars_per_request` | `4000` | 一次请求的字符预算上限（到量就切下一片） |
 | `max_cues` | `500` | 单次字幕最多翻多少条，超出部分保留原文（防长视频烧钱） |
-| `timeout_ms` | `95000` | 脚本内部总预算，超时就把已翻好的先返回，其余保留原文 |
+| `timeout_ms` | `20000` | 脚本内部总预算，超时就把已翻好的先返回、其余保留原文。**别调很大**，见「为什么不是流式」 |
+| `concurrency` | `3` | 同时发几个翻译请求（1~6）。越高首屏越快，也越容易撞上游 RPM |
 | `force_json3` | `true` | 改写 player 里的 `baseUrl` 为 `json3`，**绝大多数情况必须开** |
 | `cache` | `true` | 按「视频 + 语言 + 后端 + 模型」缓存译文，重看不重复花钱 |
+| `prefetch` | `true` | 在 `player` 阶段就把字幕预取并翻译好写缓存，等你开字幕时几乎秒出 |
 | `debug` | `false` | 打开后 Loon 日志有 `[YT字幕]` 输出，失败会弹通知 |
 | `system_prompt` | 空 | 想改翻译风格（比如「译成粤语口语」）就整段覆盖提示词 |
 | `custom_body` | 空 | 仅 `custom` 后端：自定义请求体模板，占位符 `{{texts_json}}` `{{target}}` `{{source}}` `{{model}}` `{{api_key}}`；留空用内置模板 |
@@ -324,7 +326,26 @@ provider = google
 
 ---
 
-## 七、排错清单
+## 七、为什么不是流式翻译（延迟是硬约束）
+
+Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整的 `timedtext` 响应 → 翻译 → `$done({body})`。
+它没有 SSE/流式回传的接口，所以「先出一句、再出一句」做不到——客户端等你这一条响应，等太久就自己放弃，
+表现就是**Loon 弹了「已翻译」，YouTube 却报「字幕加载失败」**（YouTube 侧对字幕请求有超时）。
+
+所以这个插件的设计目标是**把整体延迟压到客户端耐心之内**，三个手段：
+
+1. **并发分片**：`concurrency=3`，200 条字幕切成 2~3 片一次发出，总耗时约等于最慢那一片，而不是相加；
+2. **短预算 + 快速降级**：`timeout_ms=20000`。到点立刻返回「已翻好的 + 剩余原文」，结构完整、能正常显示，
+   绝不为了等第 5 片让整条字幕流失败；
+3. **预取预热**（`prefetch`）：`player` 响应里本来就有字幕地址，脚本在返回播放器数据后**先把字幕拉下来翻好写缓存**。
+   等你真正开启字幕时，`timedtext` 请求直接命中缓存，毫秒级返回。
+
+明白了这点，参数就有取向：**宁可少翻几条、也要快**。长视频（>500 条）宁可让 `max_cues` 截断，
+也不要让 `timeout_ms` 顶到 90 秒——那 90 秒里客户端早就报错了。
+
+---
+
+## 八、排错清单
 
 **字幕没翻译？按这个顺序查（前一条排除掉再往下走）**
 
@@ -362,6 +383,15 @@ provider = google
 - YouTube 自己没开字幕（CC）：插件只在客户端**请求字幕时**才生效；
 - 命中不到接口：在 Loon 日志里搜 `timedtext`，没有就是规则/MITM 问题；
 - 走了 QUIC：加一条 `AND,((PROTOCOL,UDP),(DEST-PORT,443)),REJECT` 逼它回落 TCP（会略微影响别的 UDP 443 应用，按需开）。
+
+**Loon 弹了「已翻译 N 条」，但 YouTube 显示「字幕加载失败」**
+
+翻译本身成功了，是**整条响应回去太慢**，YouTube 等不及（原因见「为什么不是流式翻译」）。按顺序做：
+
+- `timeout_ms` 设到 20000 以内（默认就是 20 秒）；`cues_per_request` 别低于 60；
+- `concurrency` 设 3~4，让分片并行而不是串行；
+- 用 `gemini-4-hydrogen`、`deepseek-v4-pro` 这类默认高思考的模型会慢好几倍，换 Flash 档；
+- 把 `prefetch` 打开，第二次开字幕基本是秒出。
 
 **填了 key 和模型但好像完全没用上**
 
@@ -402,7 +432,7 @@ provider = google
 
 ---
 
-## 八、本地自测
+## 九、本地自测
 
 ```bash
 node test/run.js
@@ -423,7 +453,7 @@ node test/run.js
 
 ---
 
-## 九、卸载
+## 十、卸载
 
 Loon 里关掉插件即可，YouTube 立刻恢复原生行为。想连缓存一起清掉，跑一次：
 

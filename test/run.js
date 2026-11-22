@@ -156,12 +156,56 @@ test('player：baseUrl 的 fmt 改成 json3 且保留 \\u0026 编码', function 
   const body = '{"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":'
     + '[{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc123\\u0026lang=en\\u0026fmt=pb",'
     + '"name":{"simpleText":"English"}}]}}}';
-  const r = run({ url: 'https://www.youtube.com/youtubei/v1/player?key=x', body: body });
+  const r = run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: body,
+    argument: { prefetch: false }   // 单独测改写，关掉预热
+  });
   const out = r.done[0].body;
   assert.ok(out.indexOf('fmt=json3') >= 0, 'fmt 未改成 json3:\n' + out);
   assert.ok(out.indexOf('fmt=pb') < 0, '仍存在 fmt=pb');
   assert.strictEqual((out.match(/\\u0026/g) || []).length, 2, '\\u0026 编码数量不对:\n' + out);
   assert.strictEqual(r.calls.length, 0, 'player 改写不应调用翻译 API');
+});
+
+test('player：prefetch 预热字幕并写缓存，后续 timedtext 直接命中', function () {
+  const playerBody = '{"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":'
+    + '[{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc123\\u0026lang=en\\u0026fmt=pb",'
+    + '"name":{"simpleText":"English"}}]}}}';
+  const store = {};
+  let timedtextFetch = 0;
+  const r = run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: playerBody,
+    store: store,
+    argument: { prefetch: true, cache: true },
+    translate: function (o, cb) {
+      if (/\/api\/timedtext/.test(o.url)) {
+        timedtextFetch++;
+        assert.ok(/fmt=json3/.test(o.url), '预热应请求 json3：' + o.url);
+        return cb(null, { status: 200 }, JSON.stringify({ events: [
+          { tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }
+        ] }));
+      }
+      const texts = extractUserTexts(o.body);
+      cb(null, { status: 200 }, JSON.stringify({ choices: [{ message: { content: JSON.stringify(texts.map(function (t) { return '译:' + t; })) } }] }));
+    }
+  });
+  assert.strictEqual(timedtextFetch, 1, '应预取一次字幕');
+  const keys = Object.keys(store).filter(function (k) { return k.indexOf('ytst.') === 0; });
+  assert.ok(keys.length >= 1, '预热后应有缓存 key，实际：' + JSON.stringify(Object.keys(store)));
+  assert.ok(JSON.stringify(store[keys[0]]).indexOf('译:Hi') >= 0, '缓存里应有译文');
+
+  // 第二次真正请求字幕：应完全命中缓存，不再调用翻译 API
+  const r2 = run({
+    url: 'https://www.youtube.com/api/timedtext?v=abc123&lang=en&fmt=json3',
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    store: store,
+    argument: { prefetch: false, cache: true },
+    translate: function (o, cb) { assert.fail('命中缓存后不应再请求翻译 API'); }
+  });
+  const out2 = JSON.parse(r2.done[0].body);
+  assert.strictEqual(out2.events[0].segs[0].utf8, '译:Hi');
 });
 
 test('player：force_json3=false 时不动响应', function () {
