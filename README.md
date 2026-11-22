@@ -25,9 +25,23 @@ test/run.js                            # 本地自测（Node，模拟 Loon 运�
 
 ---
 
-## 二、安装
+## 二、安装与更新
 
-### 0. 一条链接装完（推荐）
+### 用哪条链接（重要）
+
+| 用途 | 链接 | 说明 |
+|---|---|---|
+| **日常安装 / 想随最新版更新** | `.../main/YouTube-Subtitle-Translate.plugin` | 固定地址。插件列表**下拉刷新**就会重新下载，是最省事的一条 |
+| 锁定某个版本 / 不想被中途改动 | `.../v2026.11.22.16/YouTube-Subtitle-Translate.plugin` | 每个版本一个独立地址，永不变内容；但换版本等于换地址，需要重新导入 |
+
+**为什么“更新没显示”**：Loon 对单文件插件没有单独的“检查更新”按钮，它只在**插件列表下拉刷新**时按地址重新下载。
+如果装的是带版本号的地址，那个地址的内容本来就不会变，刷新也永远是同一版；这时必须换成新地址（等于新装一个）。
+
+所以推荐：装 `main` 那条，以后靠下拉刷新；急着要某一版时再用带 tag 的地址覆盖。
+
+
+
+### 0. 一条链接装完（推荐，固定 main 地址，可下拉刷新更新）
 
 Loon →「插件」→ 右上角 `+` →「从 URL 安装」：
 
@@ -38,7 +52,7 @@ https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.
 或者直接在 Safari 打开：
 
 ```
-loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.16/YouTube-Subtitle-Translate.plugin
+loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/YouTube-Subtitle-Translate.plugin
 ```
 
 > 上面是**固定版本**链接（`v2026.11.22.13`），装到的就是这个版本，raw 立刻生效。
@@ -50,7 +64,7 @@ loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subt
 
 > **国内网络提示**：插件里的脚本地址是 GitHub raw，连不上 raw 的环境（脚本拉不下来＝完全没反应）请改装
 > `YouTube-Subtitle-Translate.cdn.plugin`，它只有脚本地址不同，走 jsDelivr CDN：
-> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.16/YouTube-Subtitle-Translate.cdn.plugin`
+> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/YouTube-Subtitle-Translate.cdn.plugin`
 
 > **版本要求**：主插件用 Loon 3.5.1 (983) 起的新版 Script 语法（`script("...", {${参数}})`），
 > 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
