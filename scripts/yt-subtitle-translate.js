@@ -179,10 +179,12 @@ function stripTags(s) {
  */
 function normalizeApiKey(v) {
   var k = String(v == null ? '' : v);
-  k = k.replace(/[\r\n\t]/g, '').trim();
-  k = k.replace(/^["'`]+|["'`]+$/g, '');
-  k = k.replace(/^Bearer\s+/i, '');
-  k = k.replace(/\s+/g, '');
+  for (var i = 0; i < 4; i++) {
+    k = k.replace(/[\r\n\t]/g, '').trim();
+    k = k.replace(/^["'`]+|["'`]+$/g, '');
+    k = k.replace(/^Bearer[\s:]+/i, '');
+    k = k.replace(/\s+/g, '');
+  }
   return k;
 }
 
@@ -1241,7 +1243,7 @@ function isTransientError(msg) {
  * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3.8-flash
  * 名字都来自 @google/genai v3.6.1 的 Interactions Model 枚举；注意 gemini-3-flash 不存在（只有 gemini-3-flash-preview）
  */
-var PLUGIN_VERSION = '2026.11.22.16';
+var PLUGIN_VERSION = '2026.11.22.17';
 
 var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash';
 

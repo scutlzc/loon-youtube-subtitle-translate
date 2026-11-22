@@ -1,0 +1,16 @@
+#!name=YT字幕·接口自检
+#!desc=Safari 打开 http://loon.selftest 即可测试手机能否把 JSON POST 发到翻译接口（不碰 YouTube）
+#!loon_version=3.2.1(733)
+#!date=2026-11-22
+#!tag=自检,DeepSeek,排错
+
+[Argument]
+api_base_url = input,https://api.deepseek.com/chat/completions,tag=接口地址,desc=默认 DeepSeek 直连地址 也可填中转地址
+api_key = input,,tag=API Key,desc=只粘 sk- 后面那串 空格和引号会自动清掉
+api_model = input,deepseek-flash,tag=模型名,desc=默认 deepseek-flash
+
+[Script]
+http-request ^http://loon\.selftest script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-api-selftest.js, argument=[{api_base_url},{api_key},{api_model}], timeout=60, tag=接口自检
+
+[MITM]
+hostname = %APPEND% loon.selftest

@@ -32,7 +32,7 @@ test/run.js                            # 本地自测（Node，模拟 Loon 运�
 | 用途 | 链接 | 说明 |
 |---|---|---|
 | **日常安装 / 想随最新版更新** | `.../main/YouTube-Subtitle-Translate.plugin` | 固定地址。插件列表**下拉刷新**就会重新下载，是最省事的一条 |
-| 锁定某个版本 / 不想被中途改动 | `.../v2026.11.22.16/YouTube-Subtitle-Translate.plugin` | 每个版本一个独立地址，永不变内容；但换版本等于换地址，需要重新导入 |
+| 锁定某个版本 / 不想被中途改动 | `.../v2026.11.22.17/YouTube-Subtitle-Translate.plugin` | 每个版本一个独立地址，永不变内容；但换版本等于换地址，需要重新导入 |
 
 **为什么“更新没显示”**：Loon 对单文件插件没有单独的“检查更新”按钮，它只在**插件列表下拉刷新**时按地址重新下载。
 如果装的是带版本号的地址，那个地址的内容本来就不会变，刷新也永远是同一版；这时必须换成新地址（等于新装一个）。
@@ -46,7 +46,7 @@ test/run.js                            # 本地自测（Node，模拟 Loon 运�
 Loon →「插件」→ 右上角 `+` →「从 URL 安装」：
 
 ```
-https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.16/YouTube-Subtitle-Translate.plugin
+https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/YouTube-Subtitle-Translate.plugin
 ```
 
 或者直接在 Safari 打开：
@@ -437,6 +437,34 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 也不要让 `timeout_ms` 顶到 90 秒——那 90 秒里客户端早就报错了。
 
 ---
+
+## 七点五、先跑自检（排除法，一步定位）
+
+装一个 5 秒钟就能用的自检插件，它**不碰 YouTube**，只回答一个问题：这台手机能不能把 JSON POST 发到翻译接口。
+
+导入（固定 main 地址）：
+
+```
+loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/SelfTest.plugin
+```
+
+然后在手机 Safari 地址栏输入并打开：
+
+```
+http://loon.selftest
+```
+
+会收到两条通知：
+
+| 通知 | 含义 |
+|---|---|
+| `① GET 401 · 80ms · api.deepseek.com` | 链路、DNS、TLS 全通（401 是因为根路径本来就要鉴权） |
+| `② POST 200 · 900ms · deepseek-flash` | ✅ 手机侧完全正常 → 问题在插件参数或字幕链路 |
+| `② POST 401` | key 被拒 → 重新生成/重新粘贴 key |
+| `② POST` 超过 5 秒没有通知 | POST 出不去 → MTU / 代理问题，看下面「GET 能通、POST 挂住」 |
+| `① GET 也失败` | 整条链路不通 → 规则/节点问题 |
+
+自检插件里可以填自己的 `接口地址` / `API Key` / `模型名`，改名/换中转都能测。
 
 ## 八、排错
 
