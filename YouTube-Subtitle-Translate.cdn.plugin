@@ -49,7 +49,7 @@ custom_body = input,"",type=string,tag=自定义请求体,desc=仅 custom 后端
 custom_response_path = input,"",type=string,tag=响应取值路径,desc=仅 custom 后端使用；例如 data.translations 留空默认 translations
 custom_item_path = input,"",type=string,tag=条目取值路径,desc=仅 custom 后端使用；响应里每条译文是对象时填它的文本字段名
 
-about = input,"v2026.11.22.15 · 当前版本",type=string,tag=关于/版本,desc=这里就是插件版本号 通知里也会带 方便确认有没有更新成功
+about = input,"v2026.11.22.16 · 当前版本",type=string,tag=关于/版本,desc=这里就是插件版本号 通知里也会带 方便确认有没有更新成功
 
 [Script]
 # 1) timedtext：字幕文本本体，支持 json3 / srv3 / vtt / ttml

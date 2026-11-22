@@ -32,13 +32,13 @@ test/run.js                            # 本地自测（Node，模拟 Loon 运�
 Loon →「插件」→ 右上角 `+` →「从 URL 安装」：
 
 ```
-https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.15/YouTube-Subtitle-Translate.plugin
+https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.16/YouTube-Subtitle-Translate.plugin
 ```
 
 或者直接在 Safari 打开：
 
 ```
-loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.15/YouTube-Subtitle-Translate.plugin
+loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.16/YouTube-Subtitle-Translate.plugin
 ```
 
 > 上面是**固定版本**链接（`v2026.11.22.13`），装到的就是这个版本，raw 立刻生效。
@@ -50,7 +50,7 @@ loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subt
 
 > **国内网络提示**：插件里的脚本地址是 GitHub raw，连不上 raw 的环境（脚本拉不下来＝完全没反应）请改装
 > `YouTube-Subtitle-Translate.cdn.plugin`，它只有脚本地址不同，走 jsDelivr CDN：
-> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.15/YouTube-Subtitle-Translate.cdn.plugin`
+> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.16/YouTube-Subtitle-Translate.cdn.plugin`
 
 > **版本要求**：主插件用 Loon 3.5.1 (983) 起的新版 Script 语法（`script("...", {${参数}})`），
 > 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
@@ -488,7 +488,7 @@ Accept-Encoding: identity
 
 | 通知 | 含义 | 处理 |
 |---|---|---|
-| `GET 能通、POST 挂住 · api.deepseek.com`（旁边还有 `0/N 条 · 8000ms`） | 链路是通的（浏览器能打开），但 **POST 一直挂着不返回**。最常见的两个原因：**IPv6 半通**、**MTU 太小导致大 POST 被丢包** | ① Loon 设置里**关掉 IPv6**；② 若家里是 PPPoE（MTU 1480），把 Loon 的 `tun-mtu` 调到 1400 试；③ 给 `api.deepseek.com` 加一条走代理节点的规则（别走 DIRECT） |
+| `GET 能通、POST 挂住 · api.deepseek.com`（v16 起会附带状态码，且 401/403 会单独报「链路正常 · 鉴权被拒」） | 链路是通的（浏览器能打开），但 **POST 一直挂着不返回**。最常见的两个原因：**IPv6 半通**、**MTU 太小导致大 POST 被丢包** | ① Loon 设置里**关掉 IPv6**；② 若家里是 PPPoE（MTU 1480），把 Loon 的 `tun-mtu` 调到 1400 试；③ 给 `api.deepseek.com` 加一条走代理节点的规则（别走 DIRECT） |
 | `整条链路不通` | GET 也挂住 → 规则 REJECT 了该域名，或节点/DNS 有问题 | 给该域名加一条走代理的规则；换节点再试 |
 | 没有上面任何一条，但有 `已翻译 0/N 条` | 有响应，是接口层面拒绝 | 看紧随其后的失败详情（401/404/格式） |
 

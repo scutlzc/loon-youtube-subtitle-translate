@@ -1072,7 +1072,27 @@ function translateAll(texts, cfg, videoId, finish) {
   var probeTimer = setTimeout(function () {
     if (settled || answered > 0) return;
     splitNetworkProbe(cfg);
+    shrinkRemaining();          // 顺手把还没发的片切碎，绕开 MTU 黑洞
   }, Math.min(3000, Math.max(1000, cfg.soft_deadline_ms - 1000)));
+
+  /*
+   * 3 秒一片都没回来时，最常见的物理原因是「单个 TLS 记录超过路径 MTU 被丢」。
+   * 这时把剩余分片按 10 条一份重切，让每个请求体都足够小，通常能立刻通。
+   */
+  function shrinkRemaining() {
+    if (settled || answered > 0) return;
+    var rest = chunks.slice(ci);
+    if (!rest.length) return;
+    var small = [];
+    for (var r = 0; r < rest.length; r++) {
+      var piece = rest[r];
+      for (var q = 0; q < piece.length; q += 10) small.push(piece.slice(q, q + 10));
+    }
+    if (small.length <= rest.length) return;
+    chunks = chunks.slice(0, ci).concat(small);
+    if (cfg.debug) console.log('[YT字幕] 无响应 → 剩余分片切成 ' + small.length + ' 小片重发');
+    pump();
+  }
 
   function dispatch(chunk) {
     var input = [];
@@ -1144,9 +1164,17 @@ function splitNetworkProbe(cfg) {
           'v' + PLUGIN_VERSION + ' · GET 报错 ' + String(err).slice(0, 60),
           '规则或节点问题：给该域名加一条走代理的规则', 60000);
       }
+      var st = resp && resp.status ? parseInt(resp.status, 10) : 0;
+      if (st === 401 || st === 403) {
+        // 根路径不带 key 就是 401——这恰好证明「链路是通的，鉴权拒绝」，
+        // 千万别再让人去关 IPv6，方向错了。
+        return notifyThrottled('链路正常 · 鉴权被拒(' + st + ') · ' + host,
+          'v' + PLUGIN_VERSION + ' · GET 返回 ' + st + '，POST 未回',
+          '先把这个 key 拿去电脑上 curl 验一次；key 有效时再按「POST 挂住」处理（多半是 MTU）', 60000);
+      }
       notifyThrottled('GET 能通、POST 挂住 · ' + host,
-        'v' + PLUGIN_VERSION + ' · 状态 ' + (resp && resp.status),
-        '典型是 IPv6 半通或 MTU 问题：Loon 设置里关掉 IPv6，或给该域名指定走代理节点', 60000);
+        'v' + PLUGIN_VERSION + ' · 状态 ' + st,
+        'GET(无请求体)通、POST(带请求体)挂 → 典型 MTU/PMTU 黑洞：把「每次字符」降到 800 试，或在 Loon 高级配置里把 TUN MTU 调小', 60000);
     });
   } catch (e) {
     if (!fired) { fired = true; clearTimeout(timer); }
@@ -1213,7 +1241,7 @@ function isTransientError(msg) {
  * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3.8-flash
  * 名字都来自 @google/genai v3.6.1 的 Interactions Model 枚举；注意 gemini-3-flash 不存在（只有 gemini-3-flash-preview）
  */
-var PLUGIN_VERSION = '2026.11.22.15';
+var PLUGIN_VERSION = '2026.11.22.16';
 
 var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash';
 
