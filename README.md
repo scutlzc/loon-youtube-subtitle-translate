@@ -32,17 +32,17 @@ test/run.js                            # 本地自测（Node，模拟 Loon 运�
 Loon →「插件」→ 右上角 `+` →「从 URL 安装」：
 
 ```
-https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.3/YouTube-Subtitle-Translate.plugin
+https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.4/YouTube-Subtitle-Translate.plugin
 ```
 
 或者直接在 Safari 打开：
 
 ```
-loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.3/YouTube-Subtitle-Translate.plugin
+loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.4/YouTube-Subtitle-Translate.plugin
 ```
 
-> 上面是**固定版本**链接（`v2026.11.22.3`），装到的就是这个版本，raw 立刻生效。
-> 想自动跟随最新提交，把路径里的 `v2026.11.22.3` 换成 `main`；但 GitHub raw 有约 5 分钟 CDN 缓存，
+> 上面是**固定版本**链接（`v2026.11.22.4`），装到的就是这个版本，raw 立刻生效。
+> 想自动跟随最新提交，把路径里的 `v2026.11.22.4` 换成 `main`；但 GitHub raw 有约 5 分钟 CDN 缓存，
 > 而且**移动同名 tag 后旧缓存还在**（同一个 tag 名会继续返回旧内容），所以每次发版都换一个新 tag。
 > 刚推上去的一两分钟内可能会拿到旧文件，遇到「更新完还是老样子」等几分钟再更新一次即可。
 
@@ -50,7 +50,7 @@ loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subt
 
 > **国内网络提示**：插件里的脚本地址是 GitHub raw，连不上 raw 的环境（脚本拉不下来＝完全没反应）请改装
 > `YouTube-Subtitle-Translate.cdn.plugin`，它只有脚本地址不同，走 jsDelivr CDN：
-> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.3/YouTube-Subtitle-Translate.cdn.plugin`
+> `loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/v2026.11.22.4/YouTube-Subtitle-Translate.cdn.plugin`
 
 > **版本要求**：主插件用 Loon 3.5.1 (983) 起的新版 Script 语法（`script("...", {${参数}})`），
 > 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
