@@ -1,0 +1,50 @@
+/*
+ * Loon 插件（旧版 Script 语法兼容版）：YouTube 字幕翻译
+ *
+ * 只给「Loon 低于 3.5.1 (983)」的用户使用。
+ * 新版 Loon 请装 YouTube-Subtitle-Translate.plugin，那份用新语法并有完整的类型校验。
+ *
+ * 功能、参数、脚本完全一致，只有 [Script] 段用了旧的 script-path=... 写法。
+ */
+
+#!name=YouTube 字幕翻译
+#!desc=用你自己的翻译 API 把 YouTube 字幕换成目标语言（旧版 Script 语法兼容版）
+#!system=iOS
+#!author=YG
+#!homepage=https://github.com/scutlzc/loon-youtube-subtitle-translate
+#!date=2026-11-22
+#!tag=YouTube,字幕,翻译
+#!loon_version=3.2.1(733)
+#!icon=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/YouTube.png
+
+[Argument]
+provider = select,"openai","deepl","google","custom",tag=翻译后端,desc=openai 兼容 DeepSeek Moonshot 通义 智谱 Ollama 和各类中转；deepl 需官方 key；google 免 key 但限速；custom 走自定义模板
+api_base_url = input,"https://api.openai.com/v1/chat/completions",tag=接口地址,desc=openai 填到 chat/completions 整条地址；deepl 填 https://api-free.deepl.com/v2/translate
+api_key = input,"",tag=API Key,desc=翻译服务的密钥；google 后端可留空
+api_model = input,"gpt-4o-mini",tag=模型名,desc=openai 与 custom 后端使用；deepl 与 google 忽略此项
+target_lang = select,"zh-CN","zh-TW","ja","en","ko",tag=目标语言,desc=字幕要翻成的语言
+source_lang = input,"auto",tag=源语言,desc=auto 表示自动判断
+cues_per_request = input,"40",tag=每次条数,desc=一次请求最多翻译多少条字幕
+chars_per_request = input,"2500",tag=每次字符,desc=一次请求的字符预算；到量就切下一片
+max_cues = input,"500",tag=单次上限,desc=超过这个条数的字幕保留原文不翻译
+timeout_ms = input,"95000",tag=总预算毫秒,desc=整体翻译时限；超时先返回已经翻好的部分
+force_json3 = switch,true,tag=强制 json3,desc=改写 player 响应里的字幕地址保证格式可解析
+cache = switch,true,tag=译文缓存,desc=同一视频重看不重复调用 API 省钱
+debug = switch,false,tag=调试日志,desc=开启后记录耗时与请求结果便于排错
+system_prompt = input,"",tag=自定义提示词,desc=留空用内置字幕翻译提示词
+custom_body = input,"",tag=自定义请求体,desc=仅 custom 后端使用；留空用内置模板 占位符写法见 README
+custom_response_path = input,"",tag=响应取值路径,desc=仅 custom 后端使用；例如 data.translations 留空默认 translations
+custom_item_path = input,"",tag=条目取值路径,desc=仅 custom 后端使用；响应里每条译文是对象时填它的文本字段名
+
+[Script]
+# 1) timedtext：字幕文本本体，支持 json3 / srv3 / vtt / ttml
+http-response ^https?:\/\/(www|m|music)\.youtube\.com\/api\/timedtext script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{force_json3},{cache},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·翻译字幕
+
+# 2) get_transcript：新版转录面板接口（JSON）
+http-response ^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/get_transcript script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{force_json3},{cache},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·转录面板
+
+# 3) player：把 captionTracks[].baseUrl 的 fmt 统一改成 json3，保证字幕可解析
+http-response ^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/player script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, argument=[{provider},{api_base_url},{api_key},{api_model},{target_lang},{source_lang},{cues_per_request},{chars_per_request},{max_cues},{timeout_ms},{force_json3},{cache},{debug},{system_prompt},{custom_body},{custom_response_path},{custom_item_path}], requires-body=true, timeout=180, tag=YT字幕·强制json3
+
+[MITM]
+hostname = www.youtube.com, m.youtube.com, youtubei.googleapis.com, music.youtube.com

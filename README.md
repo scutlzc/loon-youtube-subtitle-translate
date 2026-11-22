@@ -5,6 +5,7 @@ YouTube App 完全无感：不用装第三方 App、不用改播放器，只要�
 
 ```
 YouTube-Subtitle-Translate.plugin      # 插件本体（参数 + 脚本挂载 + MITM）
+YouTube-Subtitle-Translate.legacy.plugin  # 同上，仅给 Loon < 3.5.1(983) 的旧语法兼容版
 scripts/yt-subtitle-translate.js       # 主脚本：解析字幕 → 调翻译 API → 回写字幕
 scripts/yt-subtitle-config.js          # 配置助手：把 key/后端写进本地持久化配置
 test/run.js                            # 本地自测（Node，模拟 Loon 运行时）
@@ -42,6 +43,10 @@ loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subt
 
 装完填 `api_key`，再按下面第 3 步装证书即可。仓库里的 `.plugin` 已经全部指向 raw 链接，改完脚本推上去，手机上重新更新插件就生效。
 
+> **版本要求**：主插件用 Loon 3.5.1 (983) 起的新版 Script 语法（`script("...", {${参数}})`），
+> 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
+> `YouTube-Subtitle-Translate.legacy.plugin`（旧的 `script-path=` 写法，参数表单一样能编辑，只是数字都按字符串传）。
+
 本地开发才需要下面的放文件方式。
 
 ### 1. 放文件
@@ -56,8 +61,8 @@ Plugins/
     └── yt-subtitle-config.js
 ```
 
-> 也可以把两个 js 传到自己的 GitHub 仓库，然后把 `.plugin` 里所有
-> `script-path=scripts/xxx.js` 换成 raw 链接，插件就能用 URL 安装、多设备同步。
+本地开发：把三条 `script("https://raw.githubusercontent.com/.../yt-subtitle-translate.js"...)` 里的
+整条 raw 链接换成相对路径 `scripts/yt-subtitle-translate.js`，就能直接改本地文件调试。
 
 ### 2. 打开插件
 
@@ -81,7 +86,13 @@ www.youtube.com, m.youtube.com, youtubei.googleapis.com, music.youtube.com
 
 ### 4. 填参数
 
-Loon →「插件」→「YouTube 字幕翻译」→ 参数区，至少填 `api_key`，按需改 `api_model` / `target_lang`。
+Loon →「插件」→「YouTube 字幕翻译」→ 点进详情页，**参数区是一张可编辑的表单**（下拉 / 输入框 / 开关，共 17 项），
+至少填 `api_key`，按需改 `api_model` / `target_lang`；改完点保存即生效，不用重装插件。
+
+表单来自插件里的 `[Argument]` 段：每项声明成
+`参数名 = 控件类型,默认值,type=值类型,tag=界面标题,desc=说明`，再在 `[Script]` 的
+`script("...", {${参数名}, ...})` 里列出要传给脚本的参数名，脚本侧就拿到 `$argument` 对象。
+**两处都写才会出现输入框**——只写 `[Argument]` 不写 `argument` 清单，Loon 不会渲染表单，这也是旧版插件「没有编辑选项」的典型原因。
 
 ---
 
@@ -103,6 +114,9 @@ Loon →「插件」→「YouTube 字幕翻译」→ 参数区，至少填 `api_
 | `cache` | `true` | 按「视频 + 语言 + 后端 + 模型」缓存译文，重看不重复花钱 |
 | `debug` | `false` | 打开后 Loon 日志有 `[YT字幕]` 输出，失败会弹通知 |
 | `system_prompt` | 空 | 想改翻译风格（比如「译成粤语口语」）就整段覆盖提示词 |
+| `custom_body` | 空 | 仅 `custom` 后端：自定义请求体模板，占位符 `{{texts_json}}` `{{target}}` `{{source}}` `{{model}}` `{{api_key}}`；留空用内置模板 |
+| `custom_response_path` | `translations` | 仅 `custom` 后端：从响应里取译文数组的点号路径，如 `data.translations` |
+| `custom_item_path` | 空 | 仅 `custom` 后端：译文数组元素是对象时，填文本字段名，如 `text` |
 
 配置优先级：**内置默认 → 插件参数 `[Argument]` → `ytst.config` 本地配置**（后者覆盖前者）。
 所以 key 可以只放在本地配置里，插件文件本身可以直接分享。
@@ -211,6 +225,12 @@ provider = google
 
 ## 六、排错清单
 
+**插件详情页里看不到参数表单 / 没有可编辑项**
+
+- 插件版本太老：本仓库 2026-11-22 之前的版本把 `[Argument]` 写成了 `key=value`，那不是 Loon 认的声明格式，所以整段被忽略。重新从 URL 更新插件即可；
+- Loon 低于 3.5.1 (983)：主插件用的是新版 Script 语法，改装 `YouTube-Subtitle-Translate.legacy.plugin`；
+- 自己改的插件：`[Argument]` 只负责「声明」，还要在每条 `[Script]` 的 `script(...)` 第二个参数里列出参数名（旧语法是 `argument=[{参数名}]`）。两处缺一处，表单和 `$argument` 都会缺席。
+
 **字幕完全没变化**
 
 - MITM 没开 / 证书没信任 → 先去 Loon 的「MitM」页确认有流量记录；
@@ -256,9 +276,10 @@ node test/run.js
 - protobuf 与空响应的放行、一次性提示；
 - 缓存命中、`cache=false` 不落盘；
 - DeepL（表单编码 + 语言映射）、custom（模板 + 取值路径）；
-- HTTP 500 与「模型返回条数不足」的降级行为。
+- HTTP 500 与「模型返回条数不足」的降级行为；
+- 插件参数按新语法传 Number / Boolean 时照常生效（切片、`force_json3=false` 放行）。
 
-当前 15/15 通过。
+当前 17/17 通过。
 
 ---
 

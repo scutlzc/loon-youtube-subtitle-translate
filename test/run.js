@@ -275,6 +275,39 @@ test('模型返回条数不足：缺的位置保留原文', function () {
   assert.strictEqual(out.events[1].segs[0].utf8, 'B', '缺译位置应保留原文');
 });
 
+/* ------------------------------------------------- 插件参数类型（新语法） */
+test('插件参数对象：Number / Boolean 类型直接生效', function () {
+  const body = JSON.stringify({ events: [
+    { tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'A' }] },
+    { tStartMs: 1000, dDurationMs: 1000, segs: [{ utf8: 'B' }] },
+    { tStartMs: 2000, dDurationMs: 1000, segs: [{ utf8: 'C' }] }
+  ] });
+  // 新版 [Argument] 声明 type=number / switch 时，$argument 收到的是真正的 Number / Boolean
+  const r = run({
+    url: TIMEDTEXT,
+    body: body,
+    argument: { cues_per_request: 1, chars_per_request: 5000, max_cues: 10, timeout_ms: 90000, cache: true, force_json3: true, debug: false }
+  });
+  assert.strictEqual(r.calls.length, 3, 'cues_per_request=1 应切成三次请求');
+  const out = JSON.parse(r.done[0].body);
+  assert.strictEqual(out.events[0].segs[0].utf8, '译:A');
+  assert.strictEqual(out.events[2].segs[0].utf8, '译:C');
+});
+
+test('插件参数对象：force_json3 为 Boolean false 时不改写 player', function () {
+  const playerBody = JSON.stringify({
+    captions: { playerCaptionsTracklistRenderer: { captionTracks: [
+      { baseUrl: 'https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=pb', languageCode: 'en' }
+    ] } }
+  });
+  const r = run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: playerBody,
+    argument: { force_json3: false }
+  });
+  assert.strictEqual(JSON.stringify(r.done), "[{}]", 'Boolean false 应走放行分支');
+});
+
 /* --------------------------------------------------------------- 输出 */
 let failed = 0;
 results.forEach(function (row) {
