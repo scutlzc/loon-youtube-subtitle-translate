@@ -151,6 +151,7 @@ Loon →「插件」→「YouTube 字幕翻译」→ 点进详情页，**参数�
 | `timeout_ms` | `20000` | 脚本内部总预算，超时就把已翻好的先返回、其余保留原文。**别调很大**，见「为什么不是流式」 |
 | `concurrency` | `3` | 同时发几个翻译请求（1~6）。越高首屏越快，也越容易撞上游 RPM |
 | `retry_times` | `2` | 遇到 `429` / `503` / `high demand` / 超时这类临时错误时的重试次数。`gemini` 后端重试时会**沿模型链往下换**（`gemini-flash-lite-latest` → `gemini-3.5-flash-lite` → `gemini-3-flash`，改 `fallback_model` 可自定义逗号列表），`404 模型下线` 也走这条链；换完仍失败才真正报错 |
+| `fallback_model` | `gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3-flash` | 备用模型链（逗号分隔，按顺序换）。模型报 `404 已下线` 或过载时会依次尝试；只有 `gemini` 后端会换模型，其它后端只做原样重试 |
 | `force_json3` | `true` | 改写 player 里的 `baseUrl` 为 `json3`，**绝大多数情况必须开** |
 | `cache` | `true` | 按「视频 + 语言 + 后端 + 模型」缓存译文，重看不重复花钱 |
 | `prefetch` | `true` | 在 `player` 阶段就把字幕预取并翻译好写缓存，等你开字幕时几乎秒出 |
