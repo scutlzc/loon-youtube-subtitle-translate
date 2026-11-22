@@ -1185,7 +1185,7 @@ function isTransientError(msg) {
  * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3.8-flash
  * 名字都来自 @google/genai v3.6.1 的 Interactions Model 枚举；注意 gemini-3-flash 不存在（只有 gemini-3-flash-preview）
  */
-var PLUGIN_VERSION = '2026.11.22.11';
+var PLUGIN_VERSION = '2026.11.22.14';
 
 var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash';
 
