@@ -51,6 +51,34 @@ loon://import?plugin=https://raw.githubusercontent.com/scutlzc/loon-youtube-subt
 > 参数表单、类型校验都靠它。如果你的 Loon 低于 983，改装
 > `YouTube-Subtitle-Translate.legacy.plugin`（旧的 `script-path=` 写法，参数表单一样能编辑，只是数字都按字符串传）。
 
+### 5. 确认真的在跑
+
+装完不是"就完事了"，下面三件事同时为真才会生效，缺任何一项的表现都是**装了没反应**：
+
+| 必查项 | 在哪看 |
+| --- | --- |
+| 插件开关是绿的 | Loon →「插件」→ 列表里 `YouTube 字幕翻译` 右侧开关 |
+| 全局代理是开的 | Loon 首页那个大开关（关成直连时脚本不会执行） |
+| MITM 开着且证书完全信任 | Loon →「设置」→「MitM」；iOS →「设置 → 通用 → 关于本机 → 证书信任设置」 |
+
+再看 MITM 的主机名列表里是否有这四条（插件会自动加）：
+
+```
+www.youtube.com, m.youtube.com, youtubei.googleapis.com, music.youtube.com
+```
+
+验证方式：把参数里的 `debug` 打开 → 去 Loon 的「日志」页搜 `YT字幕`，出现 `已改写，长度 …` 说明脚本命中了；
+同时视频里打开 CC，字幕应变成目标语言。调试完记得把 `debug` 关掉。
+
+播放侧还有两个前提：视频得**有字幕轨**（人工或自动生成都行），并且在播放器里**选中那条字幕**——
+没开 CC 时客户端根本不请求 `timedtext`，脚本没有可以改写的东西。
+
+排错优先级最高的三条：
+
+1. **QUIC/HTTP3**：YouTube 用 HTTP/3 时 Loon 看不到明文。在规则里加一条挡掉 UDP，或直接在 Loon 设置里关掉 QUIC；
+2. **规则走了直连**：YouTube 命中直连规则时请求不经代理，脚本不执行；
+3. **App 内缓存**：刚改完参数后把 YouTube App 从后台划掉重开，否则播放器还拿着旧的字幕地址。
+
 本地开发才需要下面的放文件方式。
 
 ### 1. 放文件
