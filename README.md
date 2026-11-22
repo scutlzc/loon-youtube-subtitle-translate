@@ -105,9 +105,9 @@ Loon →「插件」→「YouTube 字幕翻译」→ 点进详情页，**参数�
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `provider` | `openai` | `openai` / `deepl` / `google` / `custom` |
-| `api_base_url` | OpenAI 官方 | 请求地址，见下方各家示例 |
+| `api_base_url` | DeepSeek | 请求地址，默认 `https://api.deepseek.com/chat/completions`，见下方各家示例 |
 | `api_key` | 空 | 翻译服务的 key；`google` 不需要 |
-| `api_model` | `gpt-4o-mini` | 模型名；`deepl` / `google` 忽略 |
+| `api_model` | `deepseek-flash` | 模型名，见「换哪个模型」；`deepl` / `google` 忽略 |
 | `target_lang` | `zh-CN` | 目标语言，`zh-CN` / `zh-TW` / `ja` / `en` … |
 | `source_lang` | `auto` | 源语言；`auto` 交给模型判断 |
 | `cues_per_request` | `40` | 一次请求最多翻多少条字幕 |
@@ -134,16 +134,20 @@ Loon →「插件」→「YouTube 字幕翻译」→ 点进详情页，**参数�
 ```
 provider     = openai
 api_base_url = https://api.openai.com/v1/chat/completions
-api_model    = gpt-4o-mini
+api_model    = gpt-5-mini
 api_key      = sk-...
 ```
 
-### DeepSeek
+### DeepSeek（推荐）
 
 ```
 api_base_url = https://api.deepseek.com/chat/completions
-api_model    = deepseek-chat
+api_model    = deepseek-flash
 ```
+
+`deepseek-flash` 现在由 DeepSeek-V4.1-Flash 提供服务，中文口语自然、严格返回 JSON、国内直连不用挂代理。
+旧名 `deepseek-v4-flash` 仍可调用（按 Flash 计费）；`deepseek-chat` / `deepseek-reasoner` 官方已宣布逐步弃用。
+V4-Pro 质量更高但更贵也更慢，字幕用 Flash 就够。
 
 ### Moonshot / Kimi
 
@@ -218,7 +222,27 @@ provider = google
 
 ---
 
-## 五、工作原理（为什么这么设计）
+## 五、换哪个模型（选型建议）
+
+字幕翻译和「写代码」的偏好完全相反：要**快、便宜、严格按条数返回 JSON**，不需要长推理。所以规律只有一条——**选 Flash / mini / nano 这一档，别选思考模型**。
+
+| 需求 | 推荐 | 理由 |
+| --- | --- | --- |
+| 默认（中文最自然、国内直连） | DeepSeek `deepseek-flash` | 口语化好、JSON 守规矩、不用额外挂代理；插件默认值就是它 |
+| 更高质量的日/韩翻中、俚语多 | Gemini `gemini-3.7-flash` 或 `gemini-3-flash` | 多语种理解强，Flash 档延迟仍低 |
+| 极低成本跑长视频 | Gemini `gemini-2.5-flash`（$0.15 / $0.60） | 便宜到几乎无感，质量对字幕足够 |
+| 已有 OpenAI key | `gpt-5-mini` / `gpt-5-nano` | 稳定，nano 更快更便宜 |
+| 零成本试水 | `provider=google` 免费接口 | 不用 key，但会限流，长视频可能只翻一半 |
+
+**不建议**：`deepseek-v4-pro` 的思考模式、`gemini-*-think`、`o` 系列这类推理模型。它们会在 JSON 数组外面额外解释一句「以下是翻译」，插件解析失败就整片保留原文，白花钱还更慢。
+
+配套参数：
+
+- Flash / nano 档：把 `cues_per_request` 调到 60、`chars_per_request` 到 4000，往返次数少一半，首屏更快；
+- 大模型或小上下文模型：保持默认 40 / 2500；
+- 想固定风格就在 `system_prompt` 里补一句，例如「人名、片名、品牌、专业术语保留原文，其余口语化翻译，不要解释」。
+
+## 六、工作原理（为什么这么设计）
 
 1. **为什么改 `fmt`**：YouTube 客户端默认可能取 `fmt=pb`（protobuf），JS 里没法安全地解析和回写。所以在 `player` 响应里把 `baseUrl` 的 `fmt` 统一改成 `json3`——这是 YouTube 官方格式，客户端原生支持，改完既能解析又不破坏播放。
 2. **为什么按片翻译**：字幕动辄几百条，一次性塞给模型会超时、也更容易串行错位。脚本按「40 条 / 2500 字符」切片，**串行**发请求，保证顺序不乱；总预算 95 秒，到点就把已翻好的先返回。
@@ -227,7 +251,7 @@ provider = google
 
 ---
 
-## 六、排错清单
+## 七、排错清单
 
 **插件详情页里看不到参数表单 / 没有可编辑项**
 
@@ -262,11 +286,21 @@ provider = google
 
 **成本**
 
-按 10 分钟视频、约 200 条字幕估算：输入约 3k token、输出约 3k token。用 `gpt-4o-mini` 级别模型单次不到一分钱，且同一视频只付一次（有缓存）。
+按 10 分钟视频、约 200 条字幕估算：输入约 3k token、输出约 3k token（Flash 档模型单条视频大约 **1~3 分钱**，视模型而定，见下表）。同一视频只付一次，第二次走缓存。
+
+| 后端 / 模型 | 参考单价（输入 / 输出，每 1M token） | 单条 10 分钟视频 |
+| --- | --- | --- |
+| `google` 免费接口 | 0 | 0（会限流） |
+| DeepSeek `deepseek-flash` | 约 ¥3 / ¥6 | 约 ¥0.03 |
+| Gemini `gemini-2.5-flash` | $0.15 / $0.60 | 约 $0.002 |
+| Gemini `gemini-3.7-flash` | $0.75 / $3.75 | 约 $0.014 |
+| OpenAI `gpt-5-mini` | $0.25 / $2.00 | 约 $0.007 |
+
+价格随官方调整，以上按 2026-11 公开报价估算，只用于判断量级。
 
 ---
 
-## 七、本地自测
+## 八、本地自测
 
 ```bash
 node test/run.js
@@ -287,7 +321,7 @@ node test/run.js
 
 ---
 
-## 八、卸载
+## 九、卸载
 
 Loon 里关掉插件即可，YouTube 立刻恢复原生行为。想连缓存一起清掉，跑一次：
 

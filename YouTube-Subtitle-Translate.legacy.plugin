@@ -19,9 +19,9 @@
 
 [Argument]
 provider = select,"openai","deepl","google","custom",tag=翻译后端,desc=openai 兼容 DeepSeek Moonshot 通义 智谱 Ollama 和各类中转；deepl 需官方 key；google 免 key 但限速；custom 走自定义模板
-api_base_url = input,"https://api.openai.com/v1/chat/completions",tag=接口地址,desc=openai 填到 chat/completions 整条地址；deepl 填 https://api-free.deepl.com/v2/translate
+api_base_url = input,"https://api.deepseek.com/chat/completions",tag=接口地址,desc=默认 DeepSeek 直连；openai 官方填到 chat/completions 整条地址；deepl 填 https://api-free.deepl.com/v2/translate
 api_key = input,"",tag=API Key,desc=翻译服务的密钥；google 后端可留空
-api_model = input,"gpt-4o-mini",tag=模型名,desc=openai 与 custom 后端使用；deepl 与 google 忽略此项
+api_model = input,"deepseek-flash",tag=模型名,desc=openai 与 custom 后端使用 默认 deepseek-flash；deepl 与 google 忽略此项
 target_lang = select,"zh-CN","zh-TW","ja","en","ko",tag=目标语言,desc=字幕要翻成的语言
 source_lang = input,"auto",tag=源语言,desc=auto 表示自动判断
 cues_per_request = input,"40",tag=每次条数,desc=一次请求最多翻译多少条字幕
