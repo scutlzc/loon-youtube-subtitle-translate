@@ -6,7 +6,7 @@
  *
  * 功能、参数、脚本完全一致，只有 about = input,"v2026.11.22.11 · 当前版本",tag=关于/版本,desc=这里就是插件版本号 通知里也会带 方便确认有没有更新成功
 
-about = input,"v2026.11.22.18 · 当前版本",tag=关于/版本,desc=这里就是插件版本号 通知里也会带 方便确认有没有更新成功
+about = input,"v2026.11.22.19 · 当前版本",tag=关于/版本,desc=这里就是插件版本号 通知里也会带 方便确认有没有更新成功
 
 [Script] 段用了旧的 script-path=... 写法。
  */
@@ -30,8 +30,8 @@ target_lang = select,"zh-CN","zh-TW","ja","en","ko",tag=目标语言,desc=字幕
 subtitle_mode = select,"menu","google","llm",tag=字幕方式,desc=menu 推荐 解锁播放器自动翻译全语言 挑一次就记住 最稳；google 自动给字幕地址加 tlang 秒出但部分视频会被 YouTube 拒；llm 用上面配的模型逐条翻 质量最好但慢
 bilingual = switch,"false",tag=双语字幕,desc=开启后每条字幕显示两行 上一行原文 下一行译文
 source_lang = input,"auto",tag=源语言,desc=auto 表示自动判断
-cues_per_request = input,50,tag=每次条数,desc=一次请求最多翻译多少条字幕 字幕请求是客户端阻塞等待的 太小会拖慢首屏
-chars_per_request = input,2500,tag=每次字符,desc=一次请求的字符预算；到量就切下一片
+cues_per_request = input,12,tag=每次条数,desc=一次请求最多翻译多少条字幕 字幕请求是客户端阻塞等待的 太小会拖慢首屏
+chars_per_request = input,800,tag=每次字符,desc=一次请求的字符预算；到量就切下一片
 max_cues = input,"500",tag=单次上限,desc=超过这个条数的字幕保留原文不翻译
 timeout_ms = input,"20000",tag=总预算毫秒,desc=整体翻译时限；超时先返回已翻部分加原文 别让客户端干等
 concurrency = input,4,tag=并发请求,desc=同时发几个翻译请求；3 比较稳 越高首屏越快也越容易撞限速

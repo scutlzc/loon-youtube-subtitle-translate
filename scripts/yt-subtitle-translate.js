@@ -46,8 +46,8 @@ var DEFAULTS = {
 
   // ---- 批量 / 限流 ----
   // 字幕请求是客户端阻塞等待的：片要少、并发要高、总预算要短，否则客户端先超时 → 「字幕加载失败」
-  cues_per_request: 50,
-  chars_per_request: 2500,
+  cues_per_request: 12,
+  chars_per_request: 800,
   max_cues: 500,
   timeout_ms: 20000,
   soft_deadline_ms: 9000,
@@ -1081,6 +1081,8 @@ function translateAll(texts, cfg, videoId, finish) {
    * 3 秒一片都没回来时，最常见的物理原因是「单个 TLS 记录超过路径 MTU 被丢」。
    * 这时把剩余分片按 10 条一份重切，让每个请求体都足够小，通常能立刻通。
    */
+  var shrinkStep = 10;          // 每次把剩余分片压到这个条数；连续无响应就继续压小
+
   function shrinkRemaining() {
     if (settled || answered > 0) return;
     var rest = chunks.slice(ci);
@@ -1088,11 +1090,15 @@ function translateAll(texts, cfg, videoId, finish) {
     var small = [];
     for (var r = 0; r < rest.length; r++) {
       var piece = rest[r];
-      for (var q = 0; q < piece.length; q += 10) small.push(piece.slice(q, q + 10));
+      for (var q = 0; q < piece.length; q += shrinkStep) small.push(piece.slice(q, q + shrinkStep));
     }
-    if (small.length <= rest.length) return;
+    if (small.length <= rest.length) return;      // 已经切到底了
     chunks = chunks.slice(0, ci).concat(small);
-    if (cfg.debug) console.log('[YT字幕] 无响应 → 剩余分片切成 ' + small.length + ' 小片重发');
+    notifyThrottled('POST 无响应 → 自动压小请求',
+      'v' + PLUGIN_VERSION + ' · 每片 ' + shrinkStep + ' 条 · 共 ' + small.length + ' 片',
+      'GET 通、带请求体的 POST 挂住，典型是 MTU：这次先拿到部分译文，下次打开会更快', 30000);
+    if (cfg.debug) console.log('[YT字幕] 无响应 → 切成 ' + small.length + ' 片（每片 ' + shrinkStep + ' 条）');
+    shrinkStep = shrinkStep > 4 ? 4 : 2;          // 下一轮再压到 4 条 / 2 条
     pump();
   }
 
@@ -1260,7 +1266,7 @@ function isTransientError(msg) {
  * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3.8-flash
  * 名字都来自 @google/genai v3.6.1 的 Interactions Model 枚举；注意 gemini-3-flash 不存在（只有 gemini-3-flash-preview）
  */
-var PLUGIN_VERSION = '2026.11.22.18';
+var PLUGIN_VERSION = '2026.11.22.19';
 
 var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash';
 
