@@ -1186,10 +1186,27 @@ function splitNetworkProbe(cfg) {
 /*
  * 把 401/402/403/404 翻成一句人话，通知里直接告诉用户该改什么。
  */
-function httpErrorHint(status, data) {
+function needsApiKey(p) {
+  var q = String(p || '').toLowerCase();
+  return q === 'deepl' || q === 'custom' || q === 'gemini' || q === 'googleai' || q === 'interactions' || q === 'openai';
+}
+
+/* 只露头尾，方便和「电脑上 curl 通的那个 key」比对是不是同一个 */
+function maskKey(k) {
+  var s = String(k || '');
+  if (!s) return '空';
+  if (s.length <= 10) return s.slice(0, 2) + '***(长度 ' + s.length + ')';
+  return s.slice(0, 4) + '…' + s.slice(-4) + '(长度 ' + s.length + ')';
+}
+
+function httpErrorHint(status, data, cfg) {
+  var cfg_ref_key = (cfg && cfg.api_key) || '';
   var raw = String(data || '').slice(0, 120);
   var tail = raw ? ' · ' + raw : '';
-  if (status === 401) return '授权失败(401)：key 不对、已失效或带了多余空格' + tail;
+  if (status === 401) {
+    return '授权失败(401)：当前 key ' + maskKey(cfg_ref_key) +
+      ' —— 确认与电脑上 curl 通过的是同一个' + tail;
+  }
   if (status === 402) return '余额不足(402)：去控制台充值后再试' + tail;
   if (status === 403) return '无权限(403)：key 没有该模型权限或被风控' + tail;
   if (status === 404) return '地址或模型不存在(404)：核对接口地址与模型名' + tail;
@@ -1243,7 +1260,7 @@ function isTransientError(msg) {
  * gemini 系默认链：gemini-flash-lite-latest（别名，永远指向当前 Flash-Lite）→ gemini-3.5-flash-lite → gemini-3.8-flash
  * 名字都来自 @google/genai v3.6.1 的 Interactions Model 枚举；注意 gemini-3-flash 不存在（只有 gemini-3-flash-preview）
  */
-var PLUGIN_VERSION = '2026.11.22.17';
+var PLUGIN_VERSION = '2026.11.22.18';
 
 var GEMINI_FALLBACK_MODEL = 'gemini-flash-lite-latest,gemini-3.5-flash-lite,gemini-3.8-flash';
 
@@ -1302,6 +1319,9 @@ function callProviderWithRetry(texts, cfg, cb) {
 
 function callProvider(texts, cfg, cb) {
   var p = cfg.provider;
+  if (needsApiKey(p) && !cfg.api_key) {
+    return cb('未填 API Key（插件参数里的 API Key 为空）· 当前使用 ' + maskKey(cfg.api_key));
+  }
   if (p === 'gemini' || p === 'googleai' || p === 'interactions') return callGeminiNative(texts, cfg, cb);
   if (p === 'deepl') return callDeepL(texts, cfg, cb);
   if (p === 'google' || p === 'googlefree' || p === 'gtx') return callGoogle(texts, cfg, cb);
@@ -1436,7 +1456,7 @@ function callOpenAI(texts, cfg, cb) {
     if (err) return cb(String(err));
     var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
     if (status && (status < 200 || status >= 300)) {
-      return cb(httpErrorHint(status, data));
+      return cb(httpErrorHint(status, data, cfg));
     }
     var content = '';
     try {
@@ -1541,7 +1561,7 @@ function callGeminiNative(texts, cfg, cb) {
     if (err) return cb(String(err));
     var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
     if (status && (status < 200 || status >= 300)) {
-      return cb(httpErrorHint(status, data));
+      return cb(httpErrorHint(status, data, cfg));
     }
     var j;
     try { j = JSON.parse(data); } catch (e) { return cb('响应非 JSON：' + String(data || '').slice(0, 120)); }
@@ -1591,7 +1611,7 @@ function callDeepL(texts, cfg, cb) {
     if (err) return cb(String(err));
     var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
     if (status && (status < 200 || status >= 300)) {
-      return cb(httpErrorHint(status, data));
+      return cb(httpErrorHint(status, data, cfg));
     }
     try {
       var j = JSON.parse(data);
@@ -1685,7 +1705,7 @@ function callCustom(texts, cfg, cb) {
     if (err) return cb(String(err));
     var status = resp && resp.status ? parseInt(resp.status, 10) : 0;
     if (status && (status < 200 || status >= 300)) {
-      return cb(httpErrorHint(status, data));
+      return cb(httpErrorHint(status, data, cfg));
     }
     var j;
     try {

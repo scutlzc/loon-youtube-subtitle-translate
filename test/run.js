@@ -820,6 +820,31 @@ test('key 里混进空格/引号/Bearer 前缀也能洗干净', function () {
   });
 });
 
+test('没填 key：直接说清楚，不发无效请求', function () {
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: { subtitle_mode: 'llm', cache: false, provider: 'openai', api_key: '' }
+  });
+  return sleep(60).then(function () {
+    assert.strictEqual(r.calls.length, 0, '不该发出请求，实际 ' + r.calls.length + ' 次');
+    assert.ok(/API Key/.test(JSON.stringify(r.notes)), '应提示未填 key：' + JSON.stringify(r.notes));
+  });
+});
+
+test('401 结论里带 key 指纹（头 4 尾 4 + 长度）', function () {
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: { subtitle_mode: 'llm', cache: false, provider: 'openai', api_key: 'sk-abcdef123456', retry_times: 0 },
+    translate: function (o, cb) { cb(null, { status: 401 }, '{"error":{"message":"Authentication Fails"}}'); }
+  });
+  return sleep(80).then(function () {
+    const joined = JSON.stringify(r.notes);
+    assert.ok(/sk-a…3456/.test(joined), '应带掩码 key，实际 ' + joined);
+  });
+});
+
 /* --------------------------------------------------------------- 输出 */
 Promise.all(pending).then(function () {
 let failed = 0;
