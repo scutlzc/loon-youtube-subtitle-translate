@@ -864,6 +864,26 @@ function handleTranscript(cfg) {
 /* ================================ 输出工具 ================================ */
 
 // 自己回拉字幕时一定要带像样的头，裸 GET 会被当成机器人返回 "Sorry..." 页
+/*
+ * 打模型接口统一用这套头。
+ * 踩过的坑：只带 Content-Type + Authorization 时，某些网关（含 DeepSeek 的 governor WAF）
+ * 会把请求挂住不回——不是 403，是一直等到超时，看起来跟「网络不通」一模一样。
+ * 带上浏览器 UA + Accept + Accept-Encoding: identity 之后就秒回。
+ */
+var BROWSER_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+
+function apiHeaders(cfg, extra) {
+  var h = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'Accept-Encoding': 'identity',
+    'User-Agent': BROWSER_UA
+  };
+  if (cfg && cfg.api_key) h['Authorization'] = 'Bearer ' + cfg.api_key;
+  if (extra) for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) h[k] = extra[k];
+  return h;
+}
+
 function subHeaders() {
   var h = {
     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
@@ -1348,8 +1368,7 @@ function callOpenAI(texts, cfg, cb) {
       { role: 'user', content: '共 ' + texts.length + ' 条：\n' + JSON.stringify(texts) }
     ]
   };
-  var headers = { 'Content-Type': 'application/json' };
-  if (cfg.api_key) headers['Authorization'] = 'Bearer ' + cfg.api_key;
+  var headers = apiHeaders(cfg);
 
   $httpClient.post({
     url: cfg.api_base_url,
@@ -1454,8 +1473,7 @@ function callGeminiNative(texts, cfg, cb) {
   var url = cfg.api_base_url && /googleapis\.com/.test(cfg.api_base_url) ? cfg.api_base_url : GEMINI_DEFAULT_URL;
   var input = buildSystemPrompt(cfg) + '\n\n共 ' + texts.length + ' 条：\n' + JSON.stringify(texts);
   var payload = { model: cfg.api_model || 'gemini-flash-lite-latest', input: input };
-  var headers = { 'Content-Type': 'application/json' };
-  if (cfg.api_key) headers['x-goog-api-key'] = cfg.api_key;
+  var headers = apiHeaders(null, cfg.api_key ? { 'x-goog-api-key': cfg.api_key } : null);
 
   $httpClient.post({
     url: url,
@@ -1603,8 +1621,7 @@ function callCustom(texts, cfg, cb) {
     .replace(/\{\{\s*model\s*\}\}/g, cfg.api_model)
     .replace(/\{\{\s*api_key\s*\}\}/g, cfg.api_key);
 
-  var headers = { 'Content-Type': 'application/json' };
-  if (cfg.api_key) headers['Authorization'] = 'Bearer ' + cfg.api_key;
+  var headers = apiHeaders(cfg);
 
   $httpClient.post({ url: cfg.api_base_url, headers: headers, body: body }, function (err, resp, data) {
     if (err) return cb(String(err));

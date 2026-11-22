@@ -423,6 +423,25 @@ Loon 的 `response` 脚本是**一次性改写整个响应体**：拿到完整�
 2. 把 `模型名` 换成不会下线的档：`gemini-flash-lite-latest`（别名）或 `gemini-3.8-flash`，或干脆换 `deepseek-flash`（最省心，不受 Google 下线节奏影响）；
 3. 干脆把 `字幕方式` 改成 `google` 或 `menu`——这条路完全不经过模型，不可能 503。
 
+### 通知「接口 3 秒无响应」而浏览器能打开同一个域名
+
+**这是 v2026.11.22.12 及更早版本的已知坑，v13 已修**：插件之前只发 `Content-Type` + `Authorization`，
+没有 `User-Agent` / `Accept`。部分网关（含 DeepSeek 的 governor）对这类「裸请求」不返回 403，
+而是**直接把连接挂住**，表现和「网络不通」完全一致；Safari 能打开是因为浏览器自带全套请求头。
+
+v13 起统一带：
+
+```
+User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 ...) Safari/604.1
+Accept: application/json
+Accept-Encoding: identity
+```
+
+如果升级后仍然挂住，再做这两步（顺序别反）：
+
+1. 配置 → 规则：`DOMAIN,api.deepseek.com,PROXY`（换成你的策略组），别让它走 DIRECT；
+2. 若走的是海外节点而出问题，把该域名设为走国内直连/落地，或换成 `deepseek` 官方域名直连试试。
+
 ### 通知「接口 3 秒无响应」/「GET 能通、POST 挂住」/「整条链路不通」
 
 这三条是 v2026.11.22.12 起的新探针，专门区分**请求根本没回来**和**模型慢**：

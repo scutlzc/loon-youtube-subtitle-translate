@@ -794,6 +794,20 @@ test('3 秒无响应：区分「请求没通」与「模型慢」', function () 
   });
 });
 
+test('接口请求带浏览器 UA 与 Accept（少了会被 WAF 挂住）', function () {
+  const r = run({
+    url: TIMEDTEXT,
+    body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
+    argument: { subtitle_mode: 'llm', cache: false, provider: 'openai', api_key: 'sk-test' }
+  });
+  return sleep(60).then(function () {
+    const h = r.calls[0].headers || {};
+    assert.ok(/Mozilla\/5\.0/.test(h['User-Agent'] || ''), 'UA 不对：' + JSON.stringify(h));
+    assert.strictEqual(h['Accept'], 'application/json');
+    assert.strictEqual(h['Authorization'], 'Bearer sk-test');
+  });
+});
+
 /* --------------------------------------------------------------- 输出 */
 Promise.all(pending).then(function () {
 let failed = 0;
