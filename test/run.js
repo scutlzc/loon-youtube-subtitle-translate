@@ -58,6 +58,72 @@ function run(opts) {
 }
 
 const results = [];
+
+// ---- google 模式：让 YouTube 服务端翻好（tlang），脚本零延迟透传 ----
+test('google 模式：player 改写给可翻译轨道加 tlang=zh-Hans 且保留 fmt=json3', function () {
+  const body = '{"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":'
+    + '[{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc\\u0026lang=en\\u0026fmt=pb",'
+    + '"name":{"simpleText":"English"},"isTranslatable":true}]}}}';
+  const r = run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: body,
+    argument: { subtitle_mode: 'google', target_lang: 'zh-CN', prefetch: false }
+  });
+  const out = r.done[0].body;
+  assert.ok(out.indexOf('fmt=json3') >= 0, '应改成 json3：' + out);
+  assert.ok(out.indexOf('tlang=zh-Hans') >= 0, '应加 tlang=zh-Hans：' + out);
+  assert.ok(out.indexOf('\\u0026tlang=zh-Hans') >= 0, '转义应保持 \\u0026 形式');
+  assert.strictEqual(r.calls.length, 0, 'google 模式不应预热或调用模型');
+});
+
+test('google 模式：不可翻译轨道不加 tlang', function () {
+  const body = '{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?v=abc\\u0026lang=en\\u0026fmt=pb","isTranslatable":false}]}';
+  const r = run({
+    url: 'https://www.youtube.com/youtubei/v1/player?key=x',
+    body: body,
+    argument: { subtitle_mode: 'google', prefetch: false }
+  });
+  assert.ok(r.done[0].body.indexOf('tlang=') < 0, '不该加 tlang');
+});
+
+test('google 模式：timedtext 已带 tlang 时原样放行，不调模型', function () {
+  const zh = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: '你好' }] }] });
+  const r = run({
+    url: 'https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=json3&tlang=zh-Hans',
+    body: zh,
+    argument: { subtitle_mode: 'google' }
+  });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(r.done[0])), {});
+  assert.strictEqual(r.calls.length, 0);
+});
+
+test('google 模式 + 双语：再拉一次原文，合成 原文\\n译文', function () {
+  const zh = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: '你好' }] }] });
+  const en = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] });
+  const r = run({
+    url: 'https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=json3&tlang=zh-Hans',
+    body: zh,
+    argument: { subtitle_mode: 'google', bilingual: true },
+    translate: function (o, cb) {
+      assert.ok(o.url.indexOf('tlang=') < 0, '原文请求要剥掉 tlang：' + o.url);
+      cb(null, { status: 200 }, en);
+    }
+  });
+  const out = JSON.parse(r.done[0].body);
+  assert.strictEqual(out.events[0].segs[0].utf8, 'Hi\n你好');
+});
+
+test('llm 模式 + 双语：一次请求即可合成两行', function () {
+  const en = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] });
+  const r = run({
+    url: 'https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=json3',
+    body: en,
+    argument: { subtitle_mode: 'llm', bilingual: true }
+  });
+  const out = JSON.parse(r.done[0].body);
+  assert.strictEqual(out.events[0].segs[0].utf8, 'Hi\n译:Hi');
+});
+
 function test(name, fn) {
   try {
     fn();
@@ -178,7 +244,7 @@ test('player：prefetch 预热字幕并写缓存，后续 timedtext 直接命中
     url: 'https://www.youtube.com/youtubei/v1/player?key=x',
     body: playerBody,
     store: store,
-    argument: { prefetch: true, cache: true },
+    argument: { prefetch: true, cache: true, subtitle_mode: 'llm' },
     translate: function (o, cb) {
       if (/\/api\/timedtext/.test(o.url)) {
         timedtextFetch++;
@@ -192,12 +258,15 @@ test('player：prefetch 预热字幕并写缓存，后续 timedtext 直接命中
     }
   });
   assert.strictEqual(timedtextFetch, 1, '应预取一次字幕');
-  const keys = Object.keys(store).filter(function (k) { return k.indexOf('ytst.') === 0; });
+  const keys = Object.keys(store).filter(function (k) {
+    return k.indexOf('ytst.') === 0 && k.indexOf('ytst.notice.') !== 0;
+  });
   assert.ok(keys.length >= 1, '预热后应有缓存 key，实际：' + JSON.stringify(Object.keys(store)));
   assert.ok(JSON.stringify(store[keys[0]]).indexOf('译:Hi') >= 0, '缓存里应有译文');
 
   // 第二次真正请求字幕：应完全命中缓存，不再调用翻译 API
   const r2 = run({
+    argument: { subtitle_mode: 'llm' },
     url: 'https://www.youtube.com/api/timedtext?v=abc123&lang=en&fmt=json3',
     body: JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hi' }] }] }),
     store: store,

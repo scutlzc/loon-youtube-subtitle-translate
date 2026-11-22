@@ -34,6 +34,12 @@ var DEFAULTS = {
   target_lang: 'zh-CN',
   source_lang: 'auto',
 
+  // ---- 字幕来源 ----
+  // google: 让 YouTube 自己返回目标语言字幕（服务端翻译，零延迟零成本）
+  // llm:    用下面的翻译后端逐条翻（质量可控，但有往返延迟）
+  subtitle_mode: 'google',
+  bilingual: false,
+
   // ---- 批量 / 限流 ----
   // 字幕请求是客户端阻塞等待的：片要少、并发要高、总预算要短，否则客户端先超时 → 「字幕加载失败」
   cues_per_request: 80,
@@ -210,6 +216,10 @@ function resolveConfig() {
   cfg.timeout_ms = toInt(cfg.timeout_ms, 20000, 2000, 110000);
   cfg.concurrency = toInt(cfg.concurrency, 3, 1, 6);
 
+  cfg.subtitle_mode = String(cfg.subtitle_mode || 'google').toLowerCase().trim();
+  if (cfg.subtitle_mode !== 'llm') cfg.subtitle_mode = 'google';
+  cfg.bilingual = toBool(cfg.bilingual, false);
+
   cfg.force_json3 = toBool(cfg.force_json3, true);
   cfg.cache = toBool(cfg.cache, true);
   cfg.prefetch = toBool(cfg.prefetch, true);
@@ -266,6 +276,29 @@ function setQueryParam(u, key, val) {
   return base + '?' + out.join('&');
 }
 
+// YouTube 的 tlang 用「语言-Script」写法：简体是 zh-Hans，繁体是 zh-Hant
+function tlangOf(lang) {
+  var s = String(lang || '').trim();
+  var low = s.toLowerCase();
+  if (low === 'zh' || low === 'zh-cn' || low === 'zh-hans' || low === 'zh-sg') return 'zh-Hans';
+  if (low === 'zh-tw' || low === 'zh-hk' || low === 'zh-hant') return 'zh-Hant';
+  return s;
+}
+
+function stripQueryParam(u, key) {
+  var qIdx = u.indexOf('?');
+  if (qIdx < 0) return u;
+  var base = u.slice(0, qIdx);
+  var parts = u.slice(qIdx + 1).split('&');
+  var out = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue;
+    if (parts[i].split('=')[0] === key) continue;
+    out.push(parts[i]);
+  }
+  return out.length ? base + '?' + out.join('&') : base;
+}
+
 function handlePlayer(cfg) {
   var body = $response && $response.body;
   if (!cfg.force_json3) return $done({});
@@ -273,21 +306,37 @@ function handlePlayer(cfg) {
   if (body.indexOf('timedtext') < 0) return $done({});
 
   var changed = false;
+  var wantTlang = cfg.subtitle_mode === 'google' ? tlangOf(cfg.target_lang) : '';
+  var tlangAdded = 0;
+  var sawTranslatable = body.indexOf('"isTranslatable":true') >= 0;
 
-  var out = body.replace(/"baseUrl":"((?:[^"\\]|\\.)*)"/g, function (whole, raw) {
+  var out = body.replace(/"baseUrl":"((?:[^"\\]|\\.)*)"/g, function (whole, raw, offset) {
     if (raw.indexOf('timedtext') < 0) return whole;
     var hadEscapedAmp = raw.indexOf('\\u0026') >= 0;
     var plain = raw.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
     var fixed = setQueryParam(plain, 'fmt', 'json3');
+    // 让 YouTube 自己返回目标语言字幕：只看「本条轨道」后面这段里有没有 isTranslatable:true
+    if (wantTlang && sawTranslatable && fixed.indexOf('tlang=') < 0) {
+      var tail = body.slice(offset, offset + 900);
+      if (/"isTranslatable":true/.test(tail)) {
+        fixed = setQueryParam(fixed, 'tlang', wantTlang);
+        tlangAdded++;
+      }
+    }
     if (fixed === plain) return whole;
     changed = true;
     var encoded = hadEscapedAmp ? fixed.replace(/&/g, '\\u0026') : fixed;
     return '"baseUrl":"' + encoded + '"';
   });
 
+  if (wantTlang && !tlangAdded) {
+    notifyThrottled('字幕没有可翻译标记',
+      '该视频的轨道未标记 isTranslatable',
+      '可把「字幕方式」改成 llm 用模型翻', 600000);
+  }
   if (!changed) return $done({});
   doneBody(cfg, out, 'player');
-  prefetchTracks(cfg, out);
+  if (cfg.subtitle_mode === 'llm') prefetchTracks(cfg, out);   // google 模式由 YouTube 自己翻，无需预热
   return;
 }
 
@@ -465,6 +514,11 @@ function handleTimedtext(cfg) {
   var fmt = detectFormat(body);
   if (!fmt) return hintUnsupported(cfg);
 
+  // google 模式：URL 带 tlang 说明这条是 YouTube 服务端翻好的，直接透传（毫秒级，不用等模型）
+  if (cfg.subtitle_mode === 'google' && /[?&]tlang=/.test(reqUrl())) {
+    return handleServerTranslated(cfg, fmt, body);
+  }
+
   var parsed;
   if (fmt === 'json3') {
     var root;
@@ -488,8 +542,49 @@ function handleTimedtext(cfg) {
       if (typeof tr[i] === 'string' && tr[i] !== '') { any = true; break; }
     }
     if (!any) return $done({});
-    return doneBody(cfg, parsed.build(tr), 'timedtext:' + fmt);
+    var out = tr;
+    if (cfg.bilingual) {
+      out = [];
+      for (var b = 0; b < tr.length; b++) {
+        out.push(tr[b] && tr[b] !== '' ? parsed.texts[b] + '\n' + tr[b] : tr[b]);
+      }
+    }
+    return doneBody(cfg, parsed.build(out), 'timedtext:' + fmt);
   });
+}
+
+/*
+ * google 模式 + 双语：把「原文」那条再拉一次（去掉 tlang），与译文按条对齐后合成两行。
+ * 少一次模型往返，只是多一个几乎瞬时的字幕请求。
+ */
+function handleServerTranslated(cfg, fmt, body) {
+  if (!cfg.bilingual) return $done({});          // 单语：YouTube 给的已经是目标语言
+  if (fmt !== 'json3') return $done({});         // 双语只处理 json3，避免破坏其它结构
+
+  var root;
+  try { root = JSON.parse(body); } catch (e) { return $done({}); }
+  var zh = collectJson3(root);
+  if (!zh.texts.length) return $done({});
+
+  var origUrl = stripQueryParam(reqUrl(), 'tlang');
+  try {
+    $httpClient.get({ url: origUrl, headers: {} }, function (err, resp, data) {
+      if (err || !data) return $done({});
+      var srcRoot;
+      try { srcRoot = JSON.parse(data); } catch (e) { return $done({}); }
+      var src = collectJson3(srcRoot);
+      if (src.texts.length !== zh.texts.length) return $done({});  // 对不齐就只留译文
+      var merged = [];
+      for (var i = 0; i < zh.texts.length; i++) {
+        var a = src.texts[i];
+        var b = zh.texts[i];
+        merged.push(a && a !== b ? a + '\n' + b : b);
+      }
+      return doneBody(cfg, zh.build(merged), 'timedtext:双语');
+    });
+  } catch (e) {
+    return $done({});
+  }
 }
 
 /* ================================ 4. get_transcript 处理 ================================ */

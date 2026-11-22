@@ -29,6 +29,8 @@ api_base_url = input,"https://api.deepseek.com/chat/completions",type=string,tag
 api_key = input,"",type=string,tag=API Key,desc=翻译服务的密钥；google 后端可留空
 api_model = input,"deepseek-flash",type=string,tag=模型名,desc=openai 与 custom 用 默认 deepseek-flash；gemini 填 gemini-3.7-flash 或 gemini-2.5-flash；deepl 与 google 忽略此项
 target_lang = select,"zh-CN","zh-TW","ja","en","ko",type=string,tag=目标语言,desc=字幕要翻成的语言
+subtitle_mode = select,"google","llm",type=string,tag=字幕方式,desc=google 让 YouTube 自己翻 秒出且免费；llm 用上面配的模型逐条翻 质量可控但慢 需要 API Key
+bilingual = switch,false,tag=双语字幕,desc=开启后每条字幕显示两行 上一行原文 下一行译文
 source_lang = input,"auto",type=string,tag=源语言,desc=auto 表示自动判断
 cues_per_request = input,80,type=number,tag=每次条数,desc=一次请求最多翻译多少条字幕；字幕请求是客户端阻塞等待的 太小会拖慢首屏
 chars_per_request = input,4000,type=number,tag=每次字符,desc=一次请求的字符预算；到量就切下一片
@@ -46,13 +48,13 @@ custom_item_path = input,"",type=string,tag=条目取值路径,desc=仅 custom �
 
 [Script]
 # 1) timedtext：字幕文本本体，支持 json3 / srv3 / vtt / ttml
-response if ${url} ~= /^https?:\/\/(www|m|music)\.youtube\.com\/api\/timedtext/i then script("https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js", {${provider}, ${api_base_url}, ${api_key}, ${api_model}, ${target_lang}, ${source_lang}, ${cues_per_request}, ${chars_per_request}, ${max_cues}, ${timeout_ms}, ${concurrency}, ${force_json3}, ${cache}, ${prefetch}, ${debug}, ${system_prompt}, ${custom_body}, ${custom_response_path}, ${custom_item_path}}) with tag="YT字幕·翻译字幕", timeout=180, requires_body=true
+response if ${url} ~= /^https?:\/\/(www|m|music)\.youtube\.com\/api\/timedtext/i then script("https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js", {${provider}, ${api_base_url}, ${api_key}, ${api_model}, ${target_lang}, ${subtitle_mode}, ${bilingual}, ${source_lang}, ${cues_per_request}, ${chars_per_request}, ${max_cues}, ${timeout_ms}, ${concurrency}, ${force_json3}, ${cache}, ${prefetch}, ${debug}, ${system_prompt}, ${custom_body}, ${custom_response_path}, ${custom_item_path}}) with tag="YT字幕·翻译字幕", timeout=180, requires_body=true
 
 # 2) get_transcript：新版转录面板接口（JSON）
-response if ${url} ~= /^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/get_transcript/i then script("https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js", {${provider}, ${api_base_url}, ${api_key}, ${api_model}, ${target_lang}, ${source_lang}, ${cues_per_request}, ${chars_per_request}, ${max_cues}, ${timeout_ms}, ${concurrency}, ${force_json3}, ${cache}, ${prefetch}, ${debug}, ${system_prompt}, ${custom_body}, ${custom_response_path}, ${custom_item_path}}) with tag="YT字幕·转录面板", timeout=180, requires_body=true
+response if ${url} ~= /^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/get_transcript/i then script("https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js", {${provider}, ${api_base_url}, ${api_key}, ${api_model}, ${target_lang}, ${subtitle_mode}, ${bilingual}, ${source_lang}, ${cues_per_request}, ${chars_per_request}, ${max_cues}, ${timeout_ms}, ${concurrency}, ${force_json3}, ${cache}, ${prefetch}, ${debug}, ${system_prompt}, ${custom_body}, ${custom_response_path}, ${custom_item_path}}) with tag="YT字幕·转录面板", timeout=180, requires_body=true
 
 # 3) player：把 captionTracks[].baseUrl 的 fmt 统一改成 json3，保证字幕可解析
-response if ${url} ~= /^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/player/i then script("https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js", {${provider}, ${api_base_url}, ${api_key}, ${api_model}, ${target_lang}, ${source_lang}, ${cues_per_request}, ${chars_per_request}, ${max_cues}, ${timeout_ms}, ${concurrency}, ${force_json3}, ${cache}, ${prefetch}, ${debug}, ${system_prompt}, ${custom_body}, ${custom_response_path}, ${custom_item_path}}) with tag="YT字幕·强制json3", timeout=180, requires_body=true
+response if ${url} ~= /^https?:\/\/((www|m)\.youtube\.com|youtubei\.googleapis\.com)\/youtubei\/v1\/player/i then script("https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js", {${provider}, ${api_base_url}, ${api_key}, ${api_model}, ${target_lang}, ${subtitle_mode}, ${bilingual}, ${source_lang}, ${cues_per_request}, ${chars_per_request}, ${max_cues}, ${timeout_ms}, ${concurrency}, ${force_json3}, ${cache}, ${prefetch}, ${debug}, ${system_prompt}, ${custom_body}, ${custom_response_path}, ${custom_item_path}}) with tag="YT字幕·强制json3", timeout=180, requires_body=true
 
 [MITM]
 hostname = www.youtube.com, m.youtube.com, youtubei.googleapis.com, music.youtube.com
