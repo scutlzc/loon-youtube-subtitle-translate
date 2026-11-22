@@ -1,0 +1,51 @@
+/*
+ * Loon 插件：YouTube 字幕翻译
+ *
+ * 用你自己的翻译 API（OpenAI 兼容 / DeepL / Google 免费 / 自定义）把 YouTube 字幕
+ * 在代理层直接换成目标语言，YouTube App 无感。
+ *
+ * 安装：Loon「插件 → 添加 → 从 URL 安装」填入本文件的 raw 链接即可。
+ *      想本地开发，把下面 7 条 script-path 换成本机相对路径 scripts/yt-subtitle-translate.js。
+ * 详细说明见 README.md
+ */
+
+#!name=YouTube 字幕翻译
+#!desc=用可配置的翻译 API 把 YouTube 字幕换成中文（支持 OpenAI 兼容 / DeepL / Google / 自定义）
+#!system=ios
+#!author=YG
+#!homepage=https://github.com/scutlzc/loon-youtube-subtitle-translate
+#!date=2025-11-22
+#!icon=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/YouTube.png
+#!openUrl=
+
+[Argument]
+provider=openai
+api_base_url=https://api.openai.com/v1/chat/completions
+api_key=
+api_model=gpt-4o-mini
+target_lang=zh-CN
+source_lang=auto
+cues_per_request=40
+chars_per_request=2500
+max_cues=500
+timeout_ms=95000
+force_json3=true
+cache=true
+debug=false
+
+[Script]
+# 1) 字幕文本本体：json3 / srv3 / vtt / ttml
+http-response ^https?:\/\/www\.youtube\.com\/api\/timedtext script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, requires-body=true, timeout=120, tag=YT字幕·翻译字幕
+http-response ^https?:\/\/m\.youtube\.com\/api\/timedtext script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, requires-body=true, timeout=120, tag=YT字幕·翻译字幕
+http-response ^https?:\/\/music\.youtube\.com\/api\/timedtext script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, requires-body=true, timeout=120, tag=YT字幕·翻译字幕
+
+# 2) 新版转录面板接口
+http-response ^https?:\/\/(www|m)\.youtube\.com\/youtubei\/v1\/get_transcript script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, requires-body=true, timeout=120, tag=YT字幕·转录面板
+http-response ^https?:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/get_transcript script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, requires-body=true, timeout=120, tag=YT字幕·转录面板
+
+# 3) player 响应：把 captionTracks[].baseUrl 的 fmt 改成 json3，保证字幕可解析
+http-response ^https?:\/\/(www|m)\.youtube\.com\/youtubei\/v1\/player script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, requires-body=true, timeout=120, tag=YT字幕·强制json3
+http-response ^https?:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/player script-path=https://raw.githubusercontent.com/scutlzc/loon-youtube-subtitle-translate/main/scripts/yt-subtitle-translate.js, requires-body=true, timeout=120, tag=YT字幕·强制json3
+
+[MITM]
+hostname = www.youtube.com, m.youtube.com, youtubei.googleapis.com, music.youtube.com
